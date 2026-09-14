@@ -38,6 +38,7 @@ def call_tool(name: str, arguments: dict):
 from . import basic  # noqa: E402,F401
 from . import browser  # noqa: E402,F401
 from . import calendar_tool  # noqa: E402,F401
+from . import desktop  # noqa: E402,F401
 from . import email_tool  # noqa: E402,F401
 from . import notes  # noqa: E402,F401
 from . import tabs  # noqa: E402,F401

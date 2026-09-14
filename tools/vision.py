@@ -33,7 +33,11 @@ def _take_screenshot() -> Path:
         "name": "describe_screen",
         "description": (
             "Take a screenshot of the user's screen right now and describe it, "
-            "or answer a specific question about what's currently visible on it."
+            "or answer a specific question about what's currently visible on "
+            "it. To click/type into something with click_at/type_text, ask "
+            "here for its approximate pixel coordinates first -- accuracy is "
+            "limited (small local vision model), so treat the answer as a "
+            "rough estimate, not exact."
         ),
         "parameters": {
             "type": "object",
