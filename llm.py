@@ -20,7 +20,13 @@ from openai import OpenAI
 from tools import call_tool, get_tool_schemas
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.6-flash")
+# gemini-3.6-flash's free tier turned out to cap at just 20 requests/day
+# (confirmed live against the API, not a docs claim) -- nowhere near enough
+# for a tool-calling assistant. gemini-3.5-flash-lite's free tier is
+# meaningfully more usable in practice (lite tiers are built for higher
+# throughput); verified it still handles tool-calling and multi-turn
+# context correctly before making it the default.
+MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.5-flash-lite")
 
 # How many user turns of conversation history to keep. Every call resends
 # the full history (on top of the ~1.9K-token tool schema set), so letting
