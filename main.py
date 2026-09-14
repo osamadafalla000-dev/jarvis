@@ -67,11 +67,17 @@ FOLLOW_UP_SILENCE_SECONDS = 6.0  # how long to wait for a follow-up before going
 def run_loop() -> None:
     """The real assistant loop: always-on wake word -> converse -> repeat.
 
+    "Hey jarvis, <command>" works said in one breath -- listen_for_command()
+    keeps the mic stream open across wake-word detection and command
+    recording, so nothing said right up against "jarvis" gets clipped.
+
     After Jarvis answers, it keeps listening for a few seconds without
     requiring the wake word again -- so a real back-and-forth doesn't need
     "hey jarvis" before every line. Staying silent for FOLLOW_UP_SILENCE_SECONDS
     ends the conversation and puts it back to sleep, waiting for the wake word.
     """
+    import threading
+
     import audio
     from llm import Jarvis
 
@@ -82,18 +88,22 @@ def run_loop() -> None:
     jarvis = Jarvis()
     listener = audio.WakeWordListener()
 
+    def _play_ack_async() -> None:
+        # Fire-and-forget so it doesn't delay capturing whatever's said
+        # right after "hey jarvis" in the same breath.
+        threading.Thread(target=audio.play_ack, daemon=True).start()
+
     print(
-        'Jarvis is listening for "hey jarvis"... once it hears you, keep '
-        'talking -- no need to repeat the wake word between turns. Say '
-        '"hey jarvis" again anytime to interrupt it mid-sentence. Ctrl+C to quit.'
+        'Jarvis is listening for "hey jarvis"... say your command in the '
+        'same breath, no need to pause after the wake word. Keep talking '
+        'after it answers and it\'ll follow along without saying "hey '
+        'jarvis" again. Say it again anytime to interrupt it mid-sentence. '
+        'Ctrl+C to quit.'
     )
     while True:
-        listener.wait_for_wake_word()
-        audio.play_ack()
-        in_conversation = True
-        while in_conversation:
-            print("Listening...")
-            recording = audio.record_utterance(initial_wait_seconds=FOLLOW_UP_SILENCE_SECONDS)
+        print("Listening...")
+        recording = listener.listen_for_command(on_detected=_play_ack_async)
+        while True:
             text = audio.transcribe(recording)
             if not text:
                 break  # silence -- conversation's over, go back to sleep
@@ -103,7 +113,9 @@ def run_loop() -> None:
             interrupted = audio.speak(reply, interrupt_listener=listener)
             _discard_attachments(jarvis)
             if interrupted:
-                audio.play_ack()  # they said "hey jarvis" again -- acknowledge and keep going
+                _play_ack_async()  # they said "hey jarvis" again -- acknowledge and keep going
+            print("Listening...")
+            recording = audio.record_utterance(initial_wait_seconds=FOLLOW_UP_SILENCE_SECONDS)
 
 
 def main() -> None:

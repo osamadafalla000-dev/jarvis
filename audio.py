@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import sounddevice as sd
@@ -19,6 +20,7 @@ SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord expects 80ms (1280 samples @ 16kHz) frames
 WAKE_WORD_MODEL = "hey_jarvis"
 TTS_VOICE = "en-GB-RyanNeural"
+SILENCE_RMS_THRESHOLD = 300.0  # int16 RMS; adjust if the mic is very quiet/loud
 # Lower threshold = accepts weaker/quieter matches (catches "hey jarvis" from
 # further away, at the cost of more false triggers from ambient noise/TV).
 # Gain amplifies the mic signal before the model sees it, since distant
@@ -65,13 +67,17 @@ class WakeWordListener:
         self._queue: queue.Queue[np.ndarray] = queue.Queue()
 
     def _callback(self, indata, frames, time_info, status):  # noqa: ARG002
-        chunk = indata[:, 0]
-        if self.gain != 1.0:
-            # Amplify before detection so quiet/far-field speech registers
-            # like it was spoken closer. Widen to int32 first so loud input
-            # doesn't wrap around int16 instead of clipping cleanly.
-            chunk = np.clip(chunk.astype(np.int32) * self.gain, -32768, 32767).astype(np.int16)
-        self._queue.put(chunk.copy())
+        # Store the raw chunk -- gain is applied separately, only for wake-word
+        # prediction (see _amplify), so anything recorded from this same
+        # queue for an actual command isn't stuck at wake-word-detection gain.
+        self._queue.put(indata[:, 0].copy())
+
+    def _amplify(self, chunk: np.ndarray) -> np.ndarray:
+        if self.gain == 1.0:
+            return chunk
+        # Widen to int32 first so loud input clips cleanly instead of
+        # wrapping around int16.
+        return np.clip(chunk.astype(np.int32) * self.gain, -32768, 32767).astype(np.int16)
 
     def wait_for_wake_word(self, stop_event: threading.Event | None = None) -> bool:
         """Blocks until the wake word is heard, returning True. If stop_event
@@ -94,10 +100,78 @@ class WakeWordListener:
                     chunk = self._queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
-                predictions = self.model.predict(chunk)
+                predictions = self.model.predict(self._amplify(chunk))
                 if predictions.get(WAKE_WORD_MODEL, 0.0) >= self.threshold:
                     return True
         return False
+
+    def listen_for_command(
+        self,
+        max_seconds: float = 10.0,
+        silence_seconds: float = 1.2,
+        on_detected: "Callable[[], None] | None" = None,
+    ) -> np.ndarray:
+        """Wait for "hey jarvis", then seamlessly keep recording the command
+        that follows on the SAME live mic stream -- so "hey jarvis, open
+        chrome" said in one breath isn't clipped by closing the mic after
+        detection and reopening a fresh stream for the command, which is
+        what wait_for_wake_word() + record_utterance() used to do. Anything
+        already queued the instant detection fires (spoken with zero gap
+        right after "jarvis") is naturally picked up first, since nothing
+        gets discarded between the two phases.
+
+        on_detected, if given, is called the moment the wake word is heard
+        (e.g. to fire off an ack sound) -- fire-and-forget, so it shouldn't
+        block for long or it'll delay capturing the command.
+
+        Returns recorded audio as float32 mono, same shape as record_utterance().
+        """
+        self.model.reset()
+        with self._queue.mutex:
+            self._queue.queue.clear()
+
+        block_seconds = WAKE_CHUNK_SAMPLES / SAMPLE_RATE
+        max_blocks = int(max_seconds / block_seconds)
+        silence_blocks_needed = int(silence_seconds / block_seconds)
+
+        with sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            blocksize=WAKE_CHUNK_SAMPLES,
+            callback=self._callback,
+        ):
+            # Phase 1: wait for the wake word.
+            while True:
+                chunk = self._queue.get()
+                predictions = self.model.predict(self._amplify(chunk))
+                if predictions.get(WAKE_WORD_MODEL, 0.0) >= self.threshold:
+                    break
+
+            if on_detected is not None:
+                on_detected()
+
+            # Phase 2: keep recording the command on the same live stream.
+            frames: list[np.ndarray] = []
+            silence_run = 0
+            heard_speech = False
+            for _ in range(max_blocks):
+                try:
+                    chunk = self._queue.get(timeout=1.0)
+                except queue.Empty:
+                    break
+                frames.append(chunk)
+                rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
+                if rms >= SILENCE_RMS_THRESHOLD:
+                    heard_speech = True
+                    silence_run = 0
+                elif heard_speech:
+                    silence_run += 1
+                    if silence_run >= silence_blocks_needed:
+                        break
+
+        audio_int16 = np.concatenate(frames) if frames else np.zeros(0, dtype=np.int16)
+        return audio_int16.astype(np.float32) / 32768.0
 
 
 def record_utterance(
@@ -113,7 +187,6 @@ def record_utterance(
     turns, where silence means "done talking to Jarvis", as opposed to the
     turn right after the wake word, where the user is already mid-sentence.
     """
-    silence_rms_threshold = 300.0  # int16 RMS; adjust if the mic is very quiet/loud
     block_seconds = 0.2
     block_samples = int(SAMPLE_RATE * block_seconds)
     max_blocks = int(max_seconds / block_seconds)
@@ -132,7 +205,7 @@ def record_utterance(
             block = block[:, 0]
             frames.append(block)
             rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
-            if rms >= silence_rms_threshold:
+            if rms >= SILENCE_RMS_THRESHOLD:
                 heard_speech = True
                 silence_run = 0
             elif heard_speech:
