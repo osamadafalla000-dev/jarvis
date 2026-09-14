@@ -5,13 +5,18 @@ APIs, no subscriptions, no phone integration.
 
 - **Wake word:** [openWakeWord](https://github.com/dscripka/openWakeWord) (local, pretrained "hey jarvis" model)
 - **Speech-to-text:** `faster-whisper` (local, runs on CPU)
-- **Brain:** [Gemini](https://aistudio.google.com) free API tier, `gemini-2.5-flash`, with tool-calling
+- **Brain:** [Gemini](https://aistudio.google.com) free API tier, `gemini-3.5-flash-lite`, with tool-calling
 - **Text-to-speech:** [`edge-tts`](https://github.com/rany2/edge-tts) (free, no key)
+- **Desktop control:** `pyautogui` (click/type into any window) + Tesseract OCR (find text on screen to click)
 
 ## Setup (Windows)
 
 1. **Install ffmpeg** (provides `ffplay`, used to play back speech):
    `winget install Gyan.FFmpeg` (skip if already installed — check with `ffplay -version`)
+
+1b. **Install Tesseract OCR** (used by `find_text_on_screen` to locate and click things by their on-screen text):
+   `winget install --id tesseract-ocr.tesseract -e` — approve the UAC prompt if one appears.
+   Without it, that one tool degrades to a clear error message; everything else still works.
 
 2. **Create a virtual environment and install dependencies:**
    ```

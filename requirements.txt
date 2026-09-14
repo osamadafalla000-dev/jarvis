@@ -14,3 +14,4 @@ pillow>=10.0.0
 requests>=2.31.0
 playwright>=1.40.0
 pyautogui>=0.9.54
+pytesseract>=0.3.13
