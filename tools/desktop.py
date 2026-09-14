@@ -1,15 +1,18 @@
 """Desktop-level mouse/keyboard automation -- clicks and types into
 whatever's on screen, in ANY window (any browser, any app), not just
-Jarvis's own Playwright-controlled Chrome. Complements describe_screen:
-look at the screen to find where something is, click there, then type.
+Jarvis's own Playwright-controlled Chrome. Complements describe_screen and
+find_text_on_screen: find where something is, click there, then type.
 """
 
 from __future__ import annotations
 
+import tempfile
 import time
+from pathlib import Path
 
 import pyautogui
 import pyperclip
+from PIL import ImageGrab
 
 from . import tool
 
@@ -56,47 +59,44 @@ def click_at(x: int, y: int, double: bool = False) -> dict:
     {
         "name": "type_text",
         "description": (
-            "Type text into a field -- any app, any browser, not just "
-            "Jarvis's own browser tabs (use browser_fill_and_submit for "
-            "those instead). STRONGLY prefer passing x/y (from "
-            "describe_screen) so this clicks the field to focus it "
-            "immediately before typing -- launching or switching to an app "
-            "does NOT reliably give it keyboard focus (Windows blocks "
-            "background processes from stealing focus), so typing with no "
-            "x/y risks landing in whatever window the user actually has "
-            "focused, which may not be the intended target at all. Only "
-            "omit x/y if a click/type into this exact field already "
-            "happened in the previous turn. Pastes via the clipboard so any "
-            "text (including emoji/unicode) comes through reliably, and "
-            "restores whatever was on the clipboard before."
+            "Click a field to focus it, then type text into it -- any app, "
+            "any browser, not just Jarvis's own browser tabs (use "
+            "browser_fill_and_submit for those instead). x/y are required: "
+            "launching or switching to an app does NOT reliably give it "
+            "keyboard focus (Windows blocks background processes from "
+            "stealing focus), so typing without clicking first risks "
+            "landing in whatever window the user actually has focused --  "
+            "which happened once already and is exactly why this always "
+            "clicks first now. Get x/y from describe_screen or "
+            "find_text_on_screen. Pastes via the clipboard so any text "
+            "(including emoji/unicode) comes through reliably, restores "
+            "whatever was on the clipboard before, and returns a screenshot "
+            "taken right after so the result can be checked."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Text to type."},
                 "x": {
-                    "type": ["integer", "null"],
-                    "description": "Click here first to focus the field before typing. Strongly recommended.",
+                    "type": "integer",
+                    "description": "Click here first to focus the field before typing.",
                 },
                 "y": {
-                    "type": ["integer", "null"],
-                    "description": "Click here first to focus the field before typing. Strongly recommended.",
+                    "type": "integer",
+                    "description": "Click here first to focus the field before typing.",
                 },
                 "press_enter": {
                     "type": ["boolean", "null"],
                     "description": "Press Enter after typing (default false).",
                 },
             },
-            "required": ["text"],
+            "required": ["text", "x", "y"],
         },
     }
 )
-def type_text(
-    text: str, x: int | None = None, y: int | None = None, press_enter: bool = False
-) -> dict:
-    if x is not None and y is not None:
-        pyautogui.click(x, y)
-        time.sleep(0.1)  # let the click-triggered focus change actually land
+def type_text(text: str, x: int, y: int, press_enter: bool = False) -> dict:
+    pyautogui.click(x, y)
+    time.sleep(0.15)  # let the click-triggered focus change actually land
 
     previous_clipboard = None
     try:
@@ -116,9 +116,12 @@ def type_text(
         time.sleep(0.1)
         pyperclip.copy(previous_clipboard)
 
+    screenshot_path = Path(tempfile.mktemp(suffix=".png"))
+    ImageGrab.grab().save(screenshot_path, format="PNG")
+
     return {
         "status": "typed",
         "text": text,
-        "clicked_first": x is not None and y is not None,
         "pressed_enter": press_enter,
+        "_attachment_path": str(screenshot_path),
     }
