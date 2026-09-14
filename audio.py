@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import queue
 import subprocess
 import sys
@@ -19,6 +20,21 @@ WAKE_WORD_MODEL = "hey_jarvis"
 TTS_VOICE = "en-GB-RyanNeural"
 _ACK_CACHE_PATH = Path(tempfile.gettempdir()) / "jarvis_ack.mp3"
 _ack_ready = False
+
+
+def _run_async(coro):
+    """Run an asyncio coroutine to completion on a fresh worker thread.
+
+    Playwright's sync API (used by the browser tools) marks whichever thread
+    it's started on as permanently "inside a running event loop" for as
+    long as the browser session stays open -- browser_session.py keeps it
+    open across calls by design. asyncio.run() then fails on that thread
+    for the rest of the process's life. Running our own asyncio work
+    (TTS) on a throwaway thread sidesteps that entirely, regardless of
+    whether the browser has been opened yet.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def ensure_wakeword_models() -> None:
@@ -127,7 +143,7 @@ def warm_up_ack() -> None:
         communicate = edge_tts.Communicate("Hey.", voice=TTS_VOICE)
         await communicate.save(str(_ACK_CACHE_PATH))
 
-    asyncio.run(_save())
+    _run_async(_save())
     _ack_ready = True
 
 
@@ -205,7 +221,7 @@ def speak(text: str, interrupt_listener: "WakeWordListener | None" = None) -> bo
                 return  # ffplay already exited (e.g. interrupted)
 
     try:
-        asyncio.run(_stream())
+        _run_async(_stream())
     finally:
         if process.stdin is not None and not process.stdin.closed:
             try:
