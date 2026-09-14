@@ -10,7 +10,8 @@ once installed) and the model pulled once with `ollama pull moondream`.
 from __future__ import annotations
 
 import base64
-import io
+import tempfile
+from pathlib import Path
 
 import requests
 from PIL import ImageGrab
@@ -21,11 +22,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 VISION_MODEL = "moondream"
 
 
-def _screenshot_base64() -> str:
-    image = ImageGrab.grab()
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
+def _take_screenshot() -> Path:
+    path = Path(tempfile.mktemp(suffix=".png"))
+    ImageGrab.grab().save(path, format="PNG")
+    return path
 
 
 @tool(
@@ -52,11 +52,12 @@ def _screenshot_base64() -> str:
 )
 def describe_screen(question: str = "Describe what's on this screen.") -> dict:
     try:
-        image_b64 = _screenshot_base64()
+        screenshot_path = _take_screenshot()
     except Exception as exc:  # noqa: BLE001
         return {"error": f"couldn't capture the screen: {exc}"}
 
     try:
+        image_b64 = base64.b64encode(screenshot_path.read_bytes()).decode()
         response = requests.post(
             OLLAMA_URL,
             json={
@@ -69,6 +70,7 @@ def describe_screen(question: str = "Describe what's on this screen.") -> dict:
         )
         response.raise_for_status()
     except requests.RequestException as exc:
+        screenshot_path.unlink(missing_ok=True)
         return {
             "error": (
                 f"couldn't reach the local Ollama vision model: {exc}. "
@@ -77,4 +79,9 @@ def describe_screen(question: str = "Describe what's on this screen.") -> dict:
             )
         }
 
-    return {"description": response.json().get("response", "").strip()}
+    return {
+        "description": response.json().get("response", "").strip(),
+        # Consumed by Jarvis.ask() and stripped before the LLM ever sees it —
+        # front-ends that can show images (like the Telegram bot) send this file.
+        "_attachment_path": str(screenshot_path),
+    }

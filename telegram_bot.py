@@ -7,8 +7,6 @@ this script just needs to be on and connected to the internet.
 
 from __future__ import annotations
 
-import asyncio
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -40,30 +38,6 @@ def _get_jarvis(chat_id: int) -> Jarvis:
     if chat_id not in _sessions:
         _sessions[chat_id] = Jarvis()
     return _sessions[chat_id]
-
-
-async def _speak_to_voice_note(text: str) -> Path | None:
-    """Generate a spoken reply and transcode it to Opus/OGG for a real Telegram
-    voice-note bubble (Telegram only renders send_voice as a voice bubble for
-    Opus-in-OGG; edge-tts itself only outputs mp3)."""
-    import edge_tts
-
-    mp3_path = Path(tempfile.mktemp(suffix=".mp3"))
-    ogg_path = Path(tempfile.mktemp(suffix=".ogg"))
-
-    try:
-        communicate = edge_tts.Communicate(text, voice=audio.TTS_VOICE)
-        await communicate.save(str(mp3_path))
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["ffmpeg", "-y", "-i", str(mp3_path), "-c:a", "libopus", str(ogg_path)],
-            capture_output=True,
-        )
-        if result.returncode != 0 or not ogg_path.exists():
-            return None
-        return ogg_path
-    finally:
-        mp3_path.unlink(missing_ok=True)
 
 
 async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  # noqa: ARG001
@@ -99,13 +73,15 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
     reply = jarvis.ask(text)
     await message.reply_text(reply)
 
-    voice_reply = await _speak_to_voice_note(reply)
-    if voice_reply:
+    # Text-only replies on Telegram (voice replies are a laptop-only thing,
+    # via main.py's speak()). Tools like describe_screen can still attach
+    # files (e.g. the actual screenshot) via Jarvis.last_attachments.
+    for attachment_path in jarvis.last_attachments:
         try:
-            with open(voice_reply, "rb") as f:
-                await message.reply_voice(f)
+            with open(attachment_path, "rb") as f:
+                await message.reply_photo(f)
         finally:
-            voice_reply.unlink(missing_ok=True)
+            Path(attachment_path).unlink(missing_ok=True)
 
 
 def main() -> None:

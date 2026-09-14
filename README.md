@@ -69,9 +69,11 @@ needed. Your PC just needs to be on and running the script.
    then restart `telegram_bot.py`. This locks the bot to only you, so a
    leaked bot token can't let a stranger read your calendar/files/etc.
    (Until you set this, the bot will answer *anyone* who messages it.)
-5. **Chat normally** — text or send a voice note. It replies with text
-   *and* a spoken voice note (same brain, same tools, as the desktop
-   version — just no wake word needed since messaging it is the "wake up").
+5. **Chat normally** — text or send a voice note. Telegram replies are
+   **text-only** (plus an image if a tool attaches one, e.g. a screenshot).
+   Spoken voice replies only happen on the desktop version (`main.py`),
+   since that's the "talking out loud" front-end — no wake word needed on
+   Telegram since messaging it is the "wake up".
 
 ## Calendar, email, notes, and web search (Phase 2)
 
@@ -109,7 +111,12 @@ serving the small `moondream` vision model — no cloud, no API key.
 ## Browser automation (Phase 3)
 
 Uses [Playwright](https://playwright.dev) (free, open-source) to open a
-**visible** Chromium window and fill in one form field at a time.
+**visible** Chromium window, fill in one form field, submit it, wait for
+the result page to actually finish loading (not just DOM-ready — a much
+stronger "networkidle" signal, bounded to 8s so a stuck page can't hang
+the tool), and screenshot that result page directly. The screenshot is
+returned as part of the same tool call, so it shows real, loaded content
+and doesn't need a separate follow-up screenshot request.
 
 1. `pip install playwright` (already in `requirements.txt`)
 2. One-time browser download: `python -m playwright install chromium`

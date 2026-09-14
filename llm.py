@@ -31,9 +31,14 @@ class Jarvis:
             )
         self.client = Groq(api_key=api_key)
         self.history: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Files (e.g. a screenshot from describe_screen) produced by tool calls
+        # during the most recent ask(). Front-ends that can show files (like
+        # the Telegram bot) can send these; voice-only front-ends can ignore it.
+        self.last_attachments: list[str] = []
 
     def ask(self, user_text: str) -> str:
         self.history.append({"role": "user", "content": user_text})
+        self.last_attachments = []
 
         for _ in range(5):  # cap tool-call round-trips to avoid infinite loops
             response = self.client.chat.completions.create(
@@ -51,6 +56,8 @@ class Jarvis:
             for call in message.tool_calls:
                 args = json.loads(call.function.arguments or "{}")
                 result = call_tool(call.function.name, args)
+                if isinstance(result, dict) and "_attachment_path" in result:
+                    self.last_attachments.append(result.pop("_attachment_path"))
                 self.history.append(
                     {
                         "role": "tool",

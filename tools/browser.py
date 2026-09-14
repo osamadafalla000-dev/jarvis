@@ -6,6 +6,9 @@ what Jarvis is doing — no headless "invisible" actions on their behalf.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from . import tool
 
 
@@ -13,8 +16,11 @@ from . import tool
     {
         "name": "browser_fill_and_submit",
         "description": (
-            "Open a URL in a visible browser window and fill in one form field "
-            "by its visible label or placeholder, optionally submitting it. "
+            "Open a URL in a visible browser window, fill in one form field by "
+            "its visible label or placeholder, optionally submit it, wait for "
+            "the resulting page to actually finish loading, then screenshot "
+            "that result page (the screenshot is sent automatically — no need "
+            "to separately call describe_screen after this). "
             "For general web search use the `web_search` tool instead — major "
             "search engines like Google actively block automated browsers, so "
             "this tool is only reliable on ordinary websites/forms without "
@@ -66,8 +72,23 @@ def browser_fill_and_submit(
             locator.first.fill(text)
             if submit:
                 locator.first.press("Enter")
-                page.wait_for_load_state("domcontentloaded")
+                # Wait for the page to actually settle before screenshotting —
+                # domcontentloaded fires before results render on most sites;
+                # networkidle is a much stronger signal. Bounded so a page with
+                # persistent connections (analytics, websockets) can't hang us.
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:  # noqa: BLE001 - timeout is fine, just proceed
+                    pass
 
-            return {"status": "done", "page_title": page.title(), "final_url": page.url}
+            screenshot_path = Path(tempfile.mktemp(suffix=".png"))
+            page.screenshot(path=str(screenshot_path))
+
+            return {
+                "status": "done",
+                "page_title": page.title(),
+                "final_url": page.url,
+                "_attachment_path": str(screenshot_path),
+            }
         finally:
             browser.close()

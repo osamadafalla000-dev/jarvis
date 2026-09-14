@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -16,12 +17,20 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
+def _discard_attachments(jarvis) -> None:
+    """The desktop front-end is voice-only — drop any files tools produced
+    (e.g. describe_screen's screenshot) instead of leaving them on disk."""
+    for path in jarvis.last_attachments:
+        Path(path).unlink(missing_ok=True)
+
+
 def run_text(query: str) -> None:
     """Send one text query straight to the brain, no audio involved."""
     from llm import Jarvis
 
     jarvis = Jarvis()
     print(jarvis.ask(query))
+    _discard_attachments(jarvis)
 
 
 def run_once() -> None:
@@ -49,6 +58,7 @@ def run_once() -> None:
     reply = jarvis.ask(text)
     print(f"Jarvis: {reply}")
     audio.speak(reply)
+    _discard_attachments(jarvis)
 
 
 def run_loop() -> None:
@@ -74,6 +84,7 @@ def run_loop() -> None:
         reply = jarvis.ask(text)
         print(f"Jarvis: {reply}")
         audio.speak(reply)
+        _discard_attachments(jarvis)
 
 
 def main() -> None:
