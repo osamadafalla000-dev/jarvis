@@ -43,6 +43,14 @@ COMMAND_SILENCE_SECONDS = float(os.environ.get("JARVIS_SILENCE_SECONDS", "1.8"))
 # values depend on the room and mic.
 WAKE_WORD_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.4"))
 WAKE_WORD_GAIN = float(os.environ.get("JARVIS_WAKE_GAIN", "3.0"))
+# "small" was the dominant latency cost in the whole pipeline -- 5+ seconds
+# to transcribe a 5-second utterance on this CPU (no usable GPU path: CUDA
+# Toolkit isn't installed, only the driver). "base" measured 2.5x+ faster
+# with byte-identical transcripts on test sentences including names and
+# multi-clause commands. "tiny" was faster still but is known to degrade
+# more on real noisy/accented speech than clean test audio, so "base" is
+# the safer default; drop to "tiny" via env var if more speed is wanted.
+WHISPER_MODEL_SIZE = os.environ.get("JARVIS_WHISPER_MODEL", "base")
 _ACK_CACHE_PATH = Path(tempfile.gettempdir()) / "jarvis_ack.mp3"
 _ack_ready = False
 
@@ -272,7 +280,7 @@ def transcribe(audio_input: np.ndarray | str) -> str:
     if _whisper_model is None:
         from faster_whisper import WhisperModel
 
-        _whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
+        _whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 
     segments, _ = _whisper_model.transcribe(audio_input, language="en", vad_filter=True)
     return " ".join(segment.text.strip() for segment in segments).strip()
