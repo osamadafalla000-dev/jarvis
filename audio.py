@@ -20,7 +20,21 @@ SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord expects 80ms (1280 samples @ 16kHz) frames
 WAKE_WORD_MODEL = "hey_jarvis"
 TTS_VOICE = "en-GB-RyanNeural"
-SILENCE_RMS_THRESHOLD = 300.0  # int16 RMS; adjust if the mic is very quiet/loud
+# A livelier, more human delivery -- same voice and same wording (that's
+# SYSTEM_PROMPT's job, in llm.py), just less flat/robotic prosody.
+TTS_RATE = os.environ.get("JARVIS_TTS_RATE", "+8%")
+TTS_PITCH = os.environ.get("JARVIS_TTS_PITCH", "+15Hz")
+# int16 RMS below this counts as "silence" for end-of-utterance detection.
+# Lowered from the historical 300 -- at 300, a normal mid-sentence dip in
+# volume (trailing off at the end of a clause, a softer word) could read as
+# "done talking" and get treated as a real pause. Adjust if the mic is very
+# quiet/loud.
+SILENCE_RMS_THRESHOLD = float(os.environ.get("JARVIS_SILENCE_RMS_THRESHOLD", "220"))
+# How long a pause has to last before Jarvis decides you're done talking and
+# moves on to answering. Bumped up from 1.2s -- that was cutting people off
+# mid-thought on any natural pause longer than a beat (e.g. "use it." was all
+# that got captured from a much longer sentence with a mid-thought pause).
+COMMAND_SILENCE_SECONDS = float(os.environ.get("JARVIS_SILENCE_SECONDS", "1.8"))
 # Lower threshold = accepts weaker/quieter matches (catches "hey jarvis" from
 # further away, at the cost of more false triggers from ambient noise/TV).
 # Gain amplifies the mic signal before the model sees it, since distant
@@ -108,7 +122,7 @@ class WakeWordListener:
     def listen_for_command(
         self,
         max_seconds: float = 10.0,
-        silence_seconds: float = 1.2,
+        silence_seconds: float = COMMAND_SILENCE_SECONDS,
         on_detected: "Callable[[], None] | None" = None,
     ) -> np.ndarray:
         """Wait for "hey jarvis", then seamlessly keep recording the command
@@ -176,7 +190,7 @@ class WakeWordListener:
 
 def record_utterance(
     max_seconds: float = 10.0,
-    silence_seconds: float = 1.2,
+    silence_seconds: float = COMMAND_SILENCE_SECONDS,
     initial_wait_seconds: float | None = None,
 ) -> np.ndarray:
     """Record from the mic until the user stops talking (simple energy-based VAD).
@@ -229,7 +243,7 @@ def warm_up_ack() -> None:
     import edge_tts
 
     async def _save():
-        communicate = edge_tts.Communicate("Hey.", voice=TTS_VOICE)
+        communicate = edge_tts.Communicate("Hey.", voice=TTS_VOICE, rate=TTS_RATE, pitch=TTS_PITCH)
         await communicate.save(str(_ACK_CACHE_PATH))
 
     _run_async(_save())
@@ -297,7 +311,7 @@ def speak(text: str, interrupt_listener: "WakeWordListener | None" = None) -> bo
         watcher.start()
 
     async def _stream():
-        communicate = edge_tts.Communicate(text, voice=TTS_VOICE)
+        communicate = edge_tts.Communicate(text, voice=TTS_VOICE, rate=TTS_RATE, pitch=TTS_PITCH)
         async for chunk in communicate.stream():
             if chunk["type"] != "audio":
                 continue
