@@ -64,31 +64,61 @@ needed. Your PC just needs to be on and running the script.
    python telegram_bot.py
    ```
 4. **Message your bot** from your phone (search its @username in Telegram).
-   The first message comes back with *"Not authorized. Your chat id is
-   1234..."* — copy that number into `.env` as `TELEGRAM_ALLOWED_CHAT_ID`,
+   Check the console the bot is running in — it logs `Message from chat id:
+   1234...`. Copy that number into `.env` as `TELEGRAM_ALLOWED_CHAT_ID`,
    then restart `telegram_bot.py`. This locks the bot to only you, so a
    leaked bot token can't let a stranger read your calendar/files/etc.
+   (Until you set this, the bot will answer *anyone* who messages it.)
 5. **Chat normally** — text or send a voice note. It replies with text
    *and* a spoken voice note (same brain, same tools, as the desktop
    version — just no wake word needed since messaging it is the "wake up").
+
+## Calendar, email, notes, and web search (Phase 2)
+
+**Notes and web search work immediately, no setup needed.** Calendar and
+email need a one-time free Google Cloud OAuth setup:
+
+1. Go to https://console.cloud.google.com/ , create a project (free).
+2. **APIs & Services -> Library**: enable the **Google Calendar API** and
+   the **Gmail API**.
+3. **APIs & Services -> OAuth consent screen**: set it up as "External" +
+   "Testing" mode, add your own Google account as a test user.
+4. **APIs & Services -> Credentials -> Create Credentials -> OAuth client
+   ID**, application type **Desktop app**. Download the JSON.
+5. Save the downloaded file as `credentials.json` in this project's root
+   folder (already git-ignored).
+6. The first time a calendar/email tool actually runs, a browser window
+   opens asking you to sign in and consent — after that, a `token.json` is
+   cached locally (also git-ignored) so you won't be asked again.
+
+Everything after that is read-only for email/calendar **except** creating
+drafts — Jarvis can draft a reply, but never calls a "send" endpoint, so
+every draft sits in Gmail until you personally open it and hit send.
 
 ## What's built so far
 
 **Phase 1 — core voice loop:**
 - Full voice loop: wake word -> record -> transcribe -> think -> speak
-- Tools: current date/time, open an application, open a URL, search local
-  files (Downloads/Documents/Desktop)
 
 **Phone access — Telegram bot:**
 - Text or voice-note conversations with Jarvis from anywhere, free,
   no tunneling. Replies with text + a spoken voice note.
 - Locked to one authorized chat id so it can't be hijacked by a stranger.
 
+**Phase 2 — tools:**
+- `get_current_datetime`, `open_application`, `open_url`, `search_files`
+  (Downloads/Documents/Desktop)
+- `get_calendar_events` — Google Calendar, read-only
+- `get_unread_emails`, `create_email_draft` — Gmail, read + draft-only
+  (never auto-sends)
+- `search_notes`, `add_note` — local Markdown "second brain" in `notes/`
+  (git-ignored, stays on your machine)
+- `web_search` — free, no API key, via DDGS
+
 ## Not built (by design)
 
 - **No phone calls** — excluded on purpose, no Twilio/Vapi/phone number of
   any kind.
-- Calendar, email, notes search, web search — planned for Phase 2.
 - Screen vision, browser automation — optional Phase 3 stretch goals.
 
 ## Notes

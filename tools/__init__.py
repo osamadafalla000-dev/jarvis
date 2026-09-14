@@ -33,3 +33,7 @@ def call_tool(name: str, arguments: dict):
 
 # Import tool modules so their @tool decorators register on package import.
 from . import basic  # noqa: E402,F401
+from . import calendar_tool  # noqa: E402,F401
+from . import email_tool  # noqa: E402,F401
+from . import notes  # noqa: E402,F401
+from . import web_search  # noqa: E402,F401
