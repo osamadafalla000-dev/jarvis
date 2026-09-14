@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import queue
 import subprocess
 import sys
@@ -18,6 +19,14 @@ SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord expects 80ms (1280 samples @ 16kHz) frames
 WAKE_WORD_MODEL = "hey_jarvis"
 TTS_VOICE = "en-GB-RyanNeural"
+# Lower threshold = accepts weaker/quieter matches (catches "hey jarvis" from
+# further away, at the cost of more false triggers from ambient noise/TV).
+# Gain amplifies the mic signal before the model sees it, since distant
+# speech simply arrives at a much lower amplitude than the model expects.
+# Both are tunable via env vars without touching code, since the right
+# values depend on the room and mic.
+WAKE_WORD_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.4"))
+WAKE_WORD_GAIN = float(os.environ.get("JARVIS_WAKE_GAIN", "3.0"))
 _ACK_CACHE_PATH = Path(tempfile.gettempdir()) / "jarvis_ack.mp3"
 _ack_ready = False
 
@@ -47,15 +56,22 @@ def ensure_wakeword_models() -> None:
 class WakeWordListener:
     """Blocks until the "hey jarvis" wake word is heard on the default mic."""
 
-    def __init__(self, threshold: float = 0.5):
+    def __init__(self, threshold: float = WAKE_WORD_THRESHOLD, gain: float = WAKE_WORD_GAIN):
         from openwakeword.model import Model
 
         self.model = Model(wakeword_models=[WAKE_WORD_MODEL])
         self.threshold = threshold
+        self.gain = gain
         self._queue: queue.Queue[np.ndarray] = queue.Queue()
 
     def _callback(self, indata, frames, time_info, status):  # noqa: ARG002
-        self._queue.put(indata[:, 0].copy())
+        chunk = indata[:, 0]
+        if self.gain != 1.0:
+            # Amplify before detection so quiet/far-field speech registers
+            # like it was spoken closer. Widen to int32 first so loud input
+            # doesn't wrap around int16 instead of clipping cleanly.
+            chunk = np.clip(chunk.astype(np.int32) * self.gain, -32768, 32767).astype(np.int16)
+        self._queue.put(chunk.copy())
 
     def wait_for_wake_word(self, stop_event: threading.Event | None = None) -> bool:
         """Blocks until the wake word is heard, returning True. If stop_event
