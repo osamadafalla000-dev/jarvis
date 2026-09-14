@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import datetime
 import os
-import subprocess
-import webbrowser
 from pathlib import Path
 
 from . import tool
@@ -79,7 +77,11 @@ def open_application(name: str) -> dict:
 @tool(
     {
         "name": "open_url",
-        "description": "Open a URL in the default web browser.",
+        "description": (
+            "Open a URL in a new tab of Jarvis's managed Google Chrome window "
+            "(not the system's default browser). Tabs stay open across "
+            "requests — use list_open_tabs / close_tab to manage them."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -90,10 +92,12 @@ def open_application(name: str) -> dict:
     }
 )
 def open_url(url: str) -> dict:
+    import browser_session
+
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    webbrowser.open(url)
-    return {"status": "opened", "url": url}
+    page = browser_session.open_tab(url)
+    return {"status": "opened", "url": url, "page_title": page.title()}
 
 
 _DEFAULT_SEARCH_ROOTS = [

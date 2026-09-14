@@ -40,5 +40,6 @@ from . import browser  # noqa: E402,F401
 from . import calendar_tool  # noqa: E402,F401
 from . import email_tool  # noqa: E402,F401
 from . import notes  # noqa: E402,F401
+from . import tabs  # noqa: E402,F401
 from . import vision  # noqa: E402,F401
 from . import web_search  # noqa: E402,F401

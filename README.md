@@ -110,23 +110,33 @@ serving the small `moondream` vision model — no cloud, no API key.
 
 ## Browser automation (Phase 3)
 
-Uses [Playwright](https://playwright.dev) (free, open-source) to open a
-**visible** Chromium window, fill in one form field, submit it, wait for
-the result page to actually finish loading (not just DOM-ready — a much
-stronger "networkidle" signal, bounded to 8s so a stuck page can't hang
-the tool), and screenshot that result page directly. The screenshot is
-returned as part of the same tool call, so it shows real, loaded content
-and doesn't need a separate follow-up screenshot request.
+Uses [Playwright](https://playwright.dev) (free, open-source) to drive
+Jarvis's own **persistent, visible Google Chrome window** (`browser_session.py`
+— the real installed Chrome via Playwright's `channel="chrome"`, not Edge
+and not Playwright's bundled Chromium, and not a fresh throwaway browser
+per action — one window, real tabs, kept open across tool calls).
 
+- `open_url` and `browser_fill_and_submit` both open tabs in this shared
+  Chrome window instead of the system default browser.
+- `browser_fill_and_submit` fills one form field, submits it, waits for the
+  result page to actually finish loading (not just DOM-ready — a much
+  stronger "networkidle" signal, bounded to 8s so a stuck page can't hang
+  the tool), then screenshots that result page directly as part of the same
+  call — no separate follow-up screenshot request needed.
+- `list_open_tabs` / `close_tab` manage tabs (by index or a text hint
+  matching the title/URL) — tabs stick around until explicitly closed.
+
+Setup:
 1. `pip install playwright` (already in `requirements.txt`)
-2. One-time browser download: `python -m playwright install chromium`
+2. Google Chrome must be installed normally (not managed by Playwright)
 
 **Known limitation:** sites with aggressive bot-detection (Google search
 being the biggest example) will block or CAPTCHA-challenge an automated
 browser — confirmed by testing. For anything search-related, the `web_search`
 tool is the reliable path since it doesn't drive a real browser at all.
 Browser automation is best reserved for ordinary forms/websites (confirmed
-working against Wikipedia's search box, for example).
+working against Wikipedia's search box, including the full open -> fill ->
+wait -> screenshot -> close-tab flow).
 
 ## What's built so far
 
@@ -135,7 +145,7 @@ working against Wikipedia's search box, for example).
 
 **Phone access — Telegram bot:**
 - Text or voice-note conversations with Jarvis from anywhere, free,
-  no tunneling. Replies with text + a spoken voice note.
+  no tunneling. Text-only replies (plus images when a tool attaches one).
 - Locked to one authorized chat id so it can't be hijacked by a stranger.
 
 **Phase 2 — tools:**
@@ -150,8 +160,13 @@ working against Wikipedia's search box, for example).
 
 **Phase 3 — tools:**
 - `describe_screen` — local screen vision via Ollama + moondream, free
-- `browser_fill_and_submit` — fills one form field in a visible browser
-  window via Playwright; not reliable against bot-detection-heavy sites
+- `browser_fill_and_submit`, `list_open_tabs`, `close_tab` — persistent
+  Chrome window with real, manageable tabs
+
+**Personality:** casual, dry-witted, talks like a sharp friend texting
+back rather than a formal assistant — light slang/emoji only when it
+genuinely fits (max one per reply), never forced in. Tuned based on
+research into what actually reads as authentic vs. "trying too hard."
 
 ## Not built (by design)
 
