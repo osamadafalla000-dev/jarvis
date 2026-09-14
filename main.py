@@ -61,30 +61,49 @@ def run_once() -> None:
     _discard_attachments(jarvis)
 
 
+FOLLOW_UP_SILENCE_SECONDS = 6.0  # how long to wait for a follow-up before going back to sleep
+
+
 def run_loop() -> None:
-    """The real assistant loop: always-on wake word -> converse -> repeat."""
+    """The real assistant loop: always-on wake word -> converse -> repeat.
+
+    After Jarvis answers, it keeps listening for a few seconds without
+    requiring the wake word again -- so a real back-and-forth doesn't need
+    "hey jarvis" before every line. Staying silent for FOLLOW_UP_SILENCE_SECONDS
+    ends the conversation and puts it back to sleep, waiting for the wake word.
+    """
     import audio
     from llm import Jarvis
 
     print("Downloading/verifying wake-word models (first run only)...")
     audio.ensure_wakeword_models()
+    audio.warm_up_ack()
 
     jarvis = Jarvis()
     listener = audio.WakeWordListener()
 
-    print('Jarvis is listening for "hey jarvis"... (Ctrl+C to quit)')
+    print(
+        'Jarvis is listening for "hey jarvis"... once it hears you, keep '
+        'talking -- no need to repeat the wake word between turns. Say '
+        '"hey jarvis" again anytime to interrupt it mid-sentence. Ctrl+C to quit.'
+    )
     while True:
         listener.wait_for_wake_word()
-        print("Wake word heard — listening...")
-        recording = audio.record_utterance()
-        text = audio.transcribe(recording)
-        if not text:
-            continue
-        print(f"You said: {text}")
-        reply = jarvis.ask(text)
-        print(f"Jarvis: {reply}")
-        audio.speak(reply)
-        _discard_attachments(jarvis)
+        audio.play_ack()
+        in_conversation = True
+        while in_conversation:
+            print("Listening...")
+            recording = audio.record_utterance(initial_wait_seconds=FOLLOW_UP_SILENCE_SECONDS)
+            text = audio.transcribe(recording)
+            if not text:
+                break  # silence -- conversation's over, go back to sleep
+            print(f"You said: {text}")
+            reply = jarvis.ask(text)
+            print(f"Jarvis: {reply}")
+            interrupted = audio.speak(reply, interrupt_listener=listener)
+            _discard_attachments(jarvis)
+            if interrupted:
+                audio.play_ack()  # they said "hey jarvis" again -- acknowledge and keep going
 
 
 def main() -> None:
