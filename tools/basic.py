@@ -90,10 +90,12 @@ def open_application(name: str) -> dict:
         "name": "close_application",
         "description": (
             "Close a running desktop application by name, e.g. 'notepad', "
-            "'calculator', 'chrome'. Tries a normal close first, which lets "
-            "the app prompt to save unsaved work if it has any -- only pass "
-            "force=true if a normal close doesn't work, since that can lose "
-            "unsaved work."
+            "'calculator'. NOT for Chrome/the browser -- use close_tab or "
+            "close_all_tabs for that instead, since this closes every "
+            "process with that name machine-wide. Tries a normal close "
+            "first, which lets the app prompt to save unsaved work if it "
+            "has any -- only pass force=true if a normal close doesn't "
+            "work, since that can lose unsaved work."
         ),
         "parameters": {
             "type": "object",
@@ -113,8 +115,39 @@ def open_application(name: str) -> dict:
         },
     }
 )
+def _is_process_running(exe_name: str) -> bool | None:
+    """True/False if we could check, None if the check itself failed (so the
+    caller doesn't mistake 'couldn't verify' for 'confirmed closed')."""
+    check = subprocess.run(
+        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        return None
+    return exe_name.lower() in check.stdout.lower()
+
+
 def close_application(name: str, force: bool = False) -> dict:
     key = name.strip().lower()
+
+    # taskkill matches by image name across the WHOLE machine, not just the
+    # instance the user meant -- for Chrome that would also hit Jarvis's own
+    # isolated automation window (browser_session.py's whole point is that
+    # it's separate from the user's real Chrome) as well as any unrelated
+    # Chrome window the user has open. Too risky to allow; the browser tools
+    # (close_tab / close_all_tabs) are the correct, precise way to close
+    # Jarvis's own tabs instead.
+    if key in ("chrome", "google chrome"):
+        return {
+            "status": "error",
+            "message": (
+                "Won't close Chrome this way -- taskkill would hit every "
+                "Chrome window on the machine, including ones unrelated to "
+                "Jarvis. Use close_tab or close_all_tabs instead."
+            ),
+        }
+
     exe_name = _CLOSE_PROCESS_NAMES.get(key)
     if exe_name is None:
         command = _APP_ALIASES.get(key, name)
@@ -132,28 +165,39 @@ def close_application(name: str, force: bool = False) -> dict:
             "message": (result.stderr or result.stdout).strip(),
         }
 
-    if not force:
-        # taskkill returns success as soon as the close is *requested* --
-        # some apps (Windows Store/UWP-packaged ones especially, e.g. the
-        # Windows 11 Calculator) ignore a plain close and keep running.
-        # Verify it's actually gone before reporting success.
-        time.sleep(0.5)
-        check = subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
-            capture_output=True,
-            text=True,
-        )
-        if exe_name.lower() in check.stdout.lower():
-            return {
-                "status": "still_running",
-                "app": exe_name,
-                "message": (
-                    "close was requested but the app is still running "
-                    "(common for Windows Store/UWP apps) -- retry with force=true"
-                ),
-            }
+    if force:
+        return {"status": "closed", "app": exe_name, "forced": True}
 
-    return {"status": "closed", "app": exe_name, "forced": force}
+    # taskkill returns success as soon as the close is *requested* -- some
+    # apps (Windows Store/UWP-packaged ones especially, e.g. the Windows 11
+    # Calculator) ignore a plain close and keep running. Poll briefly rather
+    # than a single fixed-delay check, since a still-closing app (many tabs,
+    # autosave, etc.) can legitimately take longer than one short sleep.
+    still_running = True
+    for _ in range(5):  # ~2s total
+        time.sleep(0.4)
+        running = _is_process_running(exe_name)
+        if running is None:
+            return {
+                "status": "unknown",
+                "app": exe_name,
+                "message": "close was requested but couldn't verify whether it actually closed",
+            }
+        if not running:
+            still_running = False
+            break
+
+    if still_running:
+        return {
+            "status": "still_running",
+            "app": exe_name,
+            "message": (
+                "close was requested but the app is still running "
+                "(common for Windows Store/UWP apps) -- retry with force=true"
+            ),
+        }
+
+    return {"status": "closed", "app": exe_name, "forced": False}
 
 
 @tool(
