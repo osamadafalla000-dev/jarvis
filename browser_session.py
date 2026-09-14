@@ -8,11 +8,25 @@ acted on later by any tool.
 Self-healing: if the browser connection has died (crashed, closed by hand,
 etc.) any operation transparently relaunches a fresh session and retries
 once, instead of leaving the process stuck with a dead reference.
+
+Google login: Jarvis's profile starts logged out (it's a separate profile
+dir, not the user's real one), which meant every Google site opened logged
+out too. sync_google_login() copies the login cookies from one of the
+user's REAL Chrome profiles into Jarvis's isolated one, so sites open
+already signed in without Jarvis ever sharing a live browser process with
+the user's actual day-to-day Chrome. ALLOWED_GOOGLE_PROFILES is a hardcoded
+allowlist, not something the LLM can pick freely -- this machine has other
+people's Google accounts logged into other Chrome profiles (e.g. a friend's
+"Maria" profile), and those are deliberately NOT in this dict, so there's
+no code path that can ever read their cookies, regardless of what any
+prompt or tool argument says.
 """
 
 from __future__ import annotations
 
 import atexit
+import os
+import shutil
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -23,7 +37,45 @@ _context: BrowserContext | None = None
 
 PROFILE_DIR = Path(__file__).resolve().parent / ".chrome-profile"
 
+# friendly name -> real Chrome profile folder name (under
+# %LOCALAPPDATA%\Google\Chrome\User Data). Only the user's own profiles --
+# never add a profile here without confirming whose account it actually is.
+ALLOWED_GOOGLE_PROFILES = {
+    "default": "Default",  # osamadafalla2@gmail.com, main/last-used
+    "gemsgfm": "Profile 1",  # osama.d_5638@gemsgfm.com
+    "badawithe": "Profile 3",  # badawithegoat@gmail.com
+    "osamami": "Profile 4",  # osamadafalla294@gmail.com
+}
+
 T = TypeVar("T")
+
+
+def sync_google_login(profile_key: str) -> dict:
+    """Copy Google login cookies from one of the user's real Chrome
+    profiles (see ALLOWED_GOOGLE_PROFILES) into Jarvis's isolated profile,
+    then restart the browser session so the next tab opened picks it up.
+    """
+    if profile_key not in ALLOWED_GOOGLE_PROFILES:
+        return {
+            "status": "error",
+            "message": f"'{profile_key}' isn't an allowed profile. Choose one of: "
+            f"{', '.join(ALLOWED_GOOGLE_PROFILES)}.",
+        }
+
+    folder = ALLOWED_GOOGLE_PROFILES[profile_key]
+    source = Path(os.environ["LOCALAPPDATA"]) / "Google" / "Chrome" / "User Data" / folder / "Network" / "Cookies"
+    if not source.exists():
+        return {"status": "error", "message": f"couldn't find that profile's cookies at {source}"}
+
+    dest = PROFILE_DIR / "Default" / "Network" / "Cookies"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # Close Jarvis's own browser first so nothing has the destination file
+    # open while we overwrite it.
+    _reset()
+    shutil.copyfile(source, dest)
+
+    return {"status": "synced", "profile": profile_key}
 
 
 def _reset() -> None:

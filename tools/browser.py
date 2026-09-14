@@ -15,6 +15,41 @@ from . import tool
 
 @tool(
     {
+        "name": "switch_browser_profile",
+        "description": (
+            "Switch which Google account Jarvis's browser is signed into, "
+            "by copying that account's login cookies from the user's real "
+            "Chrome into Jarvis's own browser window -- so Gmail, Docs, etc. "
+            "open already logged in as that account instead of logged out. "
+            "Closes any currently open tabs (fresh browser session). Only "
+            "call this with one of the exact profile names offered -- there "
+            "is no other account to pick."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "profile": {
+                    "type": "string",
+                    # Keep in sync with browser_session.ALLOWED_GOOGLE_PROFILES --
+                    # duplicated here (not imported) so this module stays free of
+                    # a top-level Playwright import, matching every other tool in
+                    # this file, which imports browser_session lazily instead.
+                    "enum": ["default", "gemsgfm", "badawithe", "osamami"],
+                    "description": "Which account to switch to.",
+                }
+            },
+            "required": ["profile"],
+        },
+    }
+)
+def switch_browser_profile(profile: str) -> dict:
+    import browser_session
+
+    return browser_session.sync_google_login(profile)
+
+
+@tool(
+    {
         "name": "browser_fill_and_submit",
         "description": (
             "Fill one form field (by visible label/placeholder) and "
