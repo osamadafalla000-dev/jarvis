@@ -131,14 +131,10 @@ every draft sits in Gmail until you personally open it and hit send.
 
 ## Screen vision (Phase 3)
 
-Groq has no working free vision model for this account, so screen vision
-runs entirely **locally** instead via [Ollama](https://ollama.com) (free)
-serving the small `moondream` vision model — no cloud, no API key.
-
-1. Install Ollama: `winget install Ollama.Ollama` (it runs automatically
-   as a background service afterward — check with `ollama --version`).
-2. Pull the vision model once: `ollama pull moondream` (~1.7 GB, one-time).
-3. That's it — `describe_screen` will work as soon as Ollama is running.
+`describe_screen` uses Gemini's own vision capability — same API/key as
+the main brain, no extra setup. (It used to run locally via Ollama +
+moondream; that was noticeably weaker at reading on-screen text and
+context, so it's gone.)
 
 ## Browser automation (Phase 3)
 
@@ -208,7 +204,11 @@ normal run starts a fresh one in the same dedicated profile.
 - `web_search` — free, no API key, via DDGS
 
 **Phase 3 — tools:**
-- `describe_screen` — local screen vision via Ollama + moondream, free
+- `describe_screen` — screen vision via Gemini (same API/key as the brain)
+- `find_text_on_screen` — OCR (Tesseract) for precise click-ready
+  coordinates of any visible text
+- `click_at`, `type_text` — desktop-wide mouse/keyboard control, any
+  window or app, not just Jarvis's own browser tabs
 - `browser_fill_and_submit`, `list_open_tabs`, `screenshot_tab`,
   `close_tab`, `close_all_tabs` — isolated, persistent Chrome window with
   full control over every open tab, new or existing

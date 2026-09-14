@@ -1,10 +1,12 @@
-"""Screen vision via a local Ollama vision model (free, fully offline).
+"""Screen vision via Gemini's own vision capability -- same provider/API key
+as the main brain (llm.py), not a separate local service.
 
-Groq has no working free vision model for this account, so screen vision
-runs entirely locally instead: Ollama (https://ollama.com, free) serving
-the small `moondream` vision model. Requires Ollama installed and running
-(`ollama serve` — on Windows it runs automatically as a background service
-once installed) and the model pulled once with `ollama pull moondream`.
+Replaced a local Ollama + moondream setup: moondream (a tiny ~1.6B local
+model) was noticeably weak at reading on-screen text and understanding
+context -- e.g. it failed to recognize an active Google Meet call by name
+in a live test, while Gemini correctly identified the call, both
+participants, and the chat panel's location in the same screenshot. Also
+means one less always-running local service (`ollama serve`) to keep alive.
 """
 
 from __future__ import annotations
@@ -13,13 +15,9 @@ import base64
 import tempfile
 from pathlib import Path
 
-import requests
 from PIL import ImageGrab
 
 from . import tool
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-VISION_MODEL = "moondream"
 
 
 def _take_screenshot() -> Path:
@@ -32,12 +30,13 @@ def _take_screenshot() -> Path:
     {
         "name": "describe_screen",
         "description": (
-            "Take a screenshot of the user's screen right now and describe it, "
-            "or answer a specific question about what's currently visible on "
-            "it. To click/type into something with click_at/type_text, ask "
-            "here for its approximate pixel coordinates first -- accuracy is "
-            "limited (small local vision model), so treat the answer as a "
-            "rough estimate, not exact."
+            "Take a screenshot of the user's screen right now and describe "
+            "it, or answer a specific question about what's currently "
+            "visible -- including finding approximate pixel coordinates of "
+            "something to click/type into with click_at/type_text. For "
+            "anything with actual visible text, find_text_on_screen (OCR) "
+            "gives more precise coordinates; use this for non-text targets "
+            "(icons, images) or general understanding of what's on screen."
         ),
         "parameters": {
             "type": "object",
@@ -55,6 +54,13 @@ def _take_screenshot() -> Path:
     }
 )
 def describe_screen(question: str = "Describe what's on this screen.") -> dict:
+    # Imported lazily (like other tools import browser_session locally) to
+    # avoid a circular import: llm.py imports this package at module load
+    # time, before its own GEMINI_BASE_URL/MODEL constants would exist yet.
+    from llm import GEMINI_BASE_URL, MODEL
+    import os
+    from openai import OpenAI
+
     try:
         screenshot_path = _take_screenshot()
     except Exception as exc:  # noqa: BLE001
@@ -62,29 +68,28 @@ def describe_screen(question: str = "Describe what's on this screen.") -> dict:
 
     try:
         image_b64 = base64.b64encode(screenshot_path.read_bytes()).decode()
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": VISION_MODEL,
-                "prompt": question,
-                "images": [image_b64],
-                "stream": False,
-            },
-            timeout=60,
+        client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL)
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                        },
+                    ],
+                }
+            ],
         )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        screenshot_path.unlink(missing_ok=True)
-        return {
-            "error": (
-                f"couldn't reach the local Ollama vision model: {exc}. "
-                "Make sure Ollama is running and `ollama pull moondream` has "
-                "been run once."
-            )
-        }
+        description = (response.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001 - surface any vision-call failure plainly
+        return {"error": f"couldn't analyze the screenshot: {exc}"}
 
     return {
-        "description": response.json().get("response", "").strip(),
+        "description": description,
         # Consumed by Jarvis.ask() and stripped before the LLM ever sees it —
         # front-ends that can show images (like the Telegram bot) send this file.
         "_attachment_path": str(screenshot_path),
