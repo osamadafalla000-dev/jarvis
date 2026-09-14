@@ -1,32 +1,45 @@
 """A single persistent, visible Google Chrome window shared by every
-browser-related tool, so tabs stay open across tool calls and can be
-listed/closed later — instead of a fresh throwaway browser per action.
+browser-related tool, using its own dedicated profile (isolated from the
+user's real day-to-day Chrome profile/session — never touches their actual
+logins, history, or cookies). Tabs stay open across tool calls, including
+ones the user opens by hand in that same window, and can be listed/closed/
+acted on later by any tool.
 """
 
 from __future__ import annotations
 
 import atexit
+from pathlib import Path
 
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page, sync_playwright
 
 _playwright = None
-_browser: Browser | None = None
 _context: BrowserContext | None = None
+
+PROFILE_DIR = Path(__file__).resolve().parent / ".chrome-profile"
 
 
 def get_context() -> BrowserContext:
-    global _playwright, _browser, _context
+    global _playwright, _context
 
-    if _context is not None and _browser is not None and _browser.is_connected():
-        return _context
+    if _context is not None:
+        try:
+            _context.pages  # noqa: B018 - touch to verify the connection is still alive
+            return _context
+        except Exception:  # noqa: BLE001
+            _context = None
 
     if _playwright is None:
         _playwright = sync_playwright().start()
 
-    # channel="chrome" uses the user's actual installed Google Chrome,
-    # not Playwright's bundled Chromium.
-    _browser = _playwright.chromium.launch(channel="chrome", headless=False)
-    _context = _browser.new_context()
+    PROFILE_DIR.mkdir(exist_ok=True)
+    # launch_persistent_context with channel="chrome": the real installed
+    # Google Chrome (not Edge, not Playwright's bundled Chromium), but in a
+    # dedicated profile dir Jarvis owns -- not the user's actual default
+    # Chrome profile.
+    _context = _playwright.chromium.launch_persistent_context(
+        str(PROFILE_DIR), channel="chrome", headless=False
+    )
     return _context
 
 
@@ -38,9 +51,26 @@ def open_tab(url: str) -> Page:
 
 
 def list_tabs() -> list[Page]:
-    if _context is None:
-        return []
-    return [p for p in _context.pages if not p.is_closed()]
+    context = get_context()
+    return [p for p in context.pages if not p.is_closed()]
+
+
+def find_tab(index: int | None = None, hint: str | None = None) -> Page | None:
+    """Resolve a tab from any currently open one -- including tabs the user
+    opened by hand in the same window -- by index, a title/URL hint, or the
+    most recently opened/focused tab if neither is given."""
+    tabs = list_tabs()
+    if not tabs:
+        return None
+    if index is not None:
+        return tabs[index] if 0 <= index < len(tabs) else None
+    if hint:
+        hint_lower = hint.lower()
+        for page in tabs:
+            if hint_lower in page.title().lower() or hint_lower in page.url.lower():
+                return page
+        return None
+    return tabs[-1]
 
 
 def close_tab(page: Page) -> None:
@@ -49,10 +79,10 @@ def close_tab(page: Page) -> None:
 
 
 def shutdown() -> None:
-    global _playwright, _browser, _context
-    if _browser is not None:
+    global _playwright, _context
+    if _context is not None:
         try:
-            _browser.close()
+            _context.close()
         except Exception:  # noqa: BLE001
             pass
     if _playwright is not None:
@@ -60,7 +90,6 @@ def shutdown() -> None:
             _playwright.stop()
         except Exception:  # noqa: BLE001
             pass
-    _browser = None
     _context = None
     _playwright = None
 

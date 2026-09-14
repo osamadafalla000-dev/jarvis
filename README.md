@@ -112,19 +112,24 @@ serving the small `moondream` vision model — no cloud, no API key.
 
 Uses [Playwright](https://playwright.dev) (free, open-source) to drive
 Jarvis's own **persistent, visible Google Chrome window** (`browser_session.py`
-— the real installed Chrome via Playwright's `channel="chrome"`, not Edge
-and not Playwright's bundled Chromium, and not a fresh throwaway browser
-per action — one window, real tabs, kept open across tool calls).
+— the real installed Chrome via `channel="chrome"`, not Edge and not
+Playwright's bundled Chromium) running in its **own dedicated profile**
+(`.chrome-profile/`, git-ignored) — completely separate from your actual
+day-to-day Chrome profile, logins, cookies, and history. One window, kept
+open across tool calls.
 
-- `open_url` and `browser_fill_and_submit` both open tabs in this shared
-  Chrome window instead of the system default browser.
-- `browser_fill_and_submit` fills one form field, submits it, waits for the
-  result page to actually finish loading (not just DOM-ready — a much
-  stronger "networkidle" signal, bounded to 8s so a stuck page can't hang
-  the tool), then screenshots that result page directly as part of the same
-  call — no separate follow-up screenshot request needed.
-- `list_open_tabs` / `close_tab` manage tabs (by index or a text hint
-  matching the title/URL) — tabs stick around until explicitly closed.
+- `open_url` and `browser_fill_and_submit` open tabs in this Chrome window
+  instead of the system default browser.
+- `browser_fill_and_submit` can target a **new** tab (`url`) or an
+  **existing** one (`tab_index`/`tab_hint`) — including tabs opened by
+  hand, not just ones Jarvis itself opened. It fills one form field,
+  submits it, waits for the page to actually finish loading (a "networkidle"
+  signal, bounded to 8s so a stuck page can't hang the tool), then
+  screenshots the result directly as part of the same call.
+- `list_open_tabs` / `screenshot_tab` / `close_tab` / `close_all_tabs`
+  manage every open tab (by index or a text hint matching the title/URL)
+  — tabs stick around until explicitly closed, and these tools see *all*
+  open tabs, including ones you opened yourself in that same window.
 
 Setup:
 1. `pip install playwright` (already in `requirements.txt`)
@@ -136,7 +141,14 @@ browser — confirmed by testing. For anything search-related, the `web_search`
 tool is the reliable path since it doesn't drive a real browser at all.
 Browser automation is best reserved for ordinary forms/websites (confirmed
 working against Wikipedia's search box, including the full open -> fill ->
-wait -> screenshot -> close-tab flow).
+wait -> screenshot -> close-tab flow, and acting on an already-open tab
+rather than opening a new one).
+
+**If the bot process is ever force-killed** (crash, forced restart) instead
+of stopped normally, its Chrome window can be orphaned — visible but no
+longer connected to anything, since Windows doesn't auto-close child
+processes when a parent dies. Just close that window by hand; the next
+normal run starts a fresh one in the same dedicated profile.
 
 ## What's built so far
 
@@ -160,8 +172,9 @@ wait -> screenshot -> close-tab flow).
 
 **Phase 3 — tools:**
 - `describe_screen` — local screen vision via Ollama + moondream, free
-- `browser_fill_and_submit`, `list_open_tabs`, `close_tab` — persistent
-  Chrome window with real, manageable tabs
+- `browser_fill_and_submit`, `list_open_tabs`, `screenshot_tab`,
+  `close_tab`, `close_all_tabs` — isolated, persistent Chrome window with
+  full control over every open tab, new or existing
 
 **Personality:** casual, dry-witted, talks like a sharp friend texting
 back rather than a formal assistant — light slang/emoji only when it
