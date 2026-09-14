@@ -168,6 +168,53 @@ def find_text_on_screen(text: str) -> dict:
 
 @tool(
     {
+        "name": "scroll",
+        "description": (
+            "Scroll up or down on whatever's currently visible -- any "
+            "browser tab, any app. Scrolls wherever the mouse cursor "
+            "currently is unless x/y is given, which moves it there first "
+            "-- pass x/y when scrolling a specific panel (e.g. a chat "
+            "sidebar) rather than the main page/whatever the cursor happens "
+            "to be over. No result-verification screenshot (unlike click_at/"
+            "type_text) -- scrolling is usually a prep step before looking "
+            "again with find_text_on_screen/describe_screen, so keeping it "
+            "fast matters more than confirming each individual scroll."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["up", "down"],
+                    "description": "Which way to scroll.",
+                },
+                "amount": {
+                    "type": ["integer", "null"],
+                    "description": "How far, in scroll clicks (default 5 -- a few clicks is a modest scroll, more for a bigger jump).",
+                },
+                "x": {
+                    "type": ["integer", "null"],
+                    "description": "Move the mouse here first, so the scroll happens over this element/panel.",
+                },
+                "y": {
+                    "type": ["integer", "null"],
+                    "description": "Move the mouse here first, so the scroll happens over this element/panel.",
+                },
+            },
+            "required": ["direction"],
+        },
+    }
+)
+def scroll(direction: str, amount: int = 5, x: int | None = None, y: int | None = None) -> dict:
+    if x is not None and y is not None:
+        pyautogui.moveTo(x, y)
+    clicks = amount if direction == "up" else -amount
+    pyautogui.scroll(clicks)
+    return {"status": "scrolled", "direction": direction, "amount": amount}
+
+
+@tool(
+    {
         "name": "click_at",
         "description": (
             "Click at a pixel coordinate on screen (origin top-left) -- "
