@@ -7,6 +7,7 @@ this script just needs to be on and connected to the internet.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 from pathlib import Path
@@ -59,7 +60,8 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
         ogg_path = Path(tempfile.mktemp(suffix=".ogg"))
         await voice_file.download_to_drive(str(ogg_path))
         try:
-            text = audio.transcribe(str(ogg_path))
+            # transcribe() is a blocking CPU call; run off the event loop.
+            text = await asyncio.to_thread(audio.transcribe, str(ogg_path))
         finally:
             ogg_path.unlink(missing_ok=True)
     else:
@@ -70,7 +72,11 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
         return
 
     jarvis = _get_jarvis(chat_id)
-    reply = jarvis.ask(text)
+    # jarvis.ask() is synchronous and can call Playwright's *sync* API (via
+    # the browser tools), which refuses to run inside a thread that already
+    # has an asyncio event loop -- this handler is exactly that thread. Run
+    # it in a plain worker thread (no event loop of its own) instead.
+    reply = await asyncio.to_thread(jarvis.ask, text)
     await message.reply_text(reply)
 
     # Text-only replies on Telegram (voice replies are a laptop-only thing,
