@@ -89,13 +89,11 @@ def open_application(name: str) -> dict:
     {
         "name": "close_application",
         "description": (
-            "Close a running desktop application by name, e.g. 'notepad', "
-            "'calculator'. NOT for Chrome/the browser -- use close_tab or "
-            "close_all_tabs for that instead, since this closes every "
-            "process with that name machine-wide. Tries a normal close "
-            "first, which lets the app prompt to save unsaved work if it "
-            "has any -- only pass force=true if a normal close doesn't "
-            "work, since that can lose unsaved work."
+            "Close a running desktop app by name, e.g. 'notepad'. NOT for "
+            "Chrome -- use close_tab/close_all_tabs instead. Tries a normal "
+            "close first (lets the app prompt to save); force=true skips "
+            "that and can lose unsaved work, so only use it if a normal "
+            "close doesn't work."
         ),
         "parameters": {
             "type": "object",
@@ -233,12 +231,10 @@ _NEVER_CLOSE_PROCESSES = {
     {
         "name": "close_all_applications",
         "description": (
-            "Close every visible application window on the desktop (not "
-            "Chrome tabs -- use close_all_tabs for those). Sends each one a "
-            "normal close request, so anything with unsaved work gets a "
-            "chance to prompt 'save changes?' rather than being force-killed. "
-            "System/desktop-critical processes and Jarvis itself are never "
-            "touched."
+            "Close every visible app window (not Chrome tabs -- use "
+            "close_all_tabs). Sends a normal close request to each, so "
+            "unsaved work can prompt to save rather than being force-killed. "
+            "Never touches system-critical processes or Jarvis itself."
         ),
         "parameters": {"type": "object", "properties": {}},
     }

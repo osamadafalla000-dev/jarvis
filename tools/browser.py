@@ -17,19 +17,15 @@ from . import tool
     {
         "name": "browser_fill_and_submit",
         "description": (
-            "Fill in one form field by its visible label or placeholder and "
-            "optionally submit it, in either a NEW tab (pass url) or an "
-            "EXISTING tab already open in Jarvis's Chrome window (pass "
-            "tab_index or tab_hint instead of url) -- this can act on any "
-            "currently open tab, including ones opened by hand, not just ones "
-            "Jarvis itself opened. Waits for the page to actually finish "
-            "loading, then screenshots it (sent automatically -- no need to "
-            "separately call describe_screen/screenshot_tab after this). The "
-            "tab stays open afterward — use close_tab when done. "
-            "For general web search use the `web_search` tool instead — major "
-            "search engines like Google actively block automated browsers, so "
-            "this tool is only reliable on ordinary websites/forms without "
-            "bot-detection (e.g. Wikipedia, most login-free forms)."
+            "Fill one form field (by visible label/placeholder) and "
+            "optionally submit it, in a NEW tab (pass url) or an EXISTING "
+            "tab (pass tab_index/tab_hint instead) -- any open tab, "
+            "including ones opened by hand. Auto-screenshots the result (no "
+            "need to call describe_screen/screenshot_tab after). Tab stays "
+            "open -- use close_tab when done. Not for general web search "
+            "(search engines block automated browsers) -- use web_search "
+            "instead; this only works reliably on ordinary sites/forms "
+            "without bot-detection (e.g. Wikipedia)."
         ),
         "parameters": {
             "type": "object",
@@ -40,18 +36,15 @@ from . import tool
                 },
                 "tab_index": {
                     "type": ["integer", "null"],
-                    "description": "Index (from list_open_tabs) of an existing tab to act on instead of opening a new one.",
+                    "description": "Existing tab's index from list_open_tabs, instead of url.",
                 },
                 "tab_hint": {
                     "type": ["string", "null"],
-                    "description": "Title/URL hint identifying an existing tab to act on instead of opening a new one.",
+                    "description": "Existing tab's title/URL hint, instead of url.",
                 },
                 "field_hint": {
                     "type": "string",
-                    "description": (
-                        "Visible label, placeholder, or name attribute of the "
-                        "field to type into, e.g. 'Search' or 'Email'."
-                    ),
+                    "description": "Field's visible label, placeholder, or name, e.g. 'Search' or 'Email'.",
                 },
                 "text": {"type": "string", "description": "Text to type into the field."},
                 "submit": {

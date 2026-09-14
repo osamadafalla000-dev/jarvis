@@ -32,20 +32,20 @@ def list_open_tabs() -> dict:
     {
         "name": "screenshot_tab",
         "description": (
-            "Screenshot a specific open tab (by index from list_open_tabs, or a "
-            "hint matching its title/URL) so Jarvis can see its current content. "
-            "If neither is given, screenshots the most recently opened tab."
+            "Screenshot an open tab (index from list_open_tabs, or a "
+            "title/URL hint) to see its current content. Defaults to the "
+            "most recently opened tab."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "index": {
                     "type": ["integer", "null"],
-                    "description": "Tab index from list_open_tabs.",
+                    "description": "From list_open_tabs.",
                 },
                 "hint": {
                     "type": ["string", "null"],
-                    "description": "Text matching part of the tab's title or URL.",
+                    "description": "Matches part of the tab's title/URL.",
                 },
             },
         },
@@ -72,20 +72,19 @@ def screenshot_tab(index: int | None = None, hint: str | None = None) -> dict:
     {
         "name": "close_tab",
         "description": (
-            "Close a tab in Jarvis's Chrome window. Pass either the tab's "
-            "index (from list_open_tabs) or a hint that matches part of its "
-            "title/URL. If neither is given, closes the most recently opened tab."
+            "Close a tab (index from list_open_tabs, or a title/URL hint). "
+            "Defaults to the most recently opened tab."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "index": {
                     "type": ["integer", "null"],
-                    "description": "Tab index from list_open_tabs.",
+                    "description": "From list_open_tabs.",
                 },
                 "hint": {
                     "type": ["string", "null"],
-                    "description": "Text matching part of the tab's title or URL.",
+                    "description": "Matches part of the tab's title/URL.",
                 },
             },
         },
