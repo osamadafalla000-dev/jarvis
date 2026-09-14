@@ -161,8 +161,13 @@ normal run starts a fresh one in the same dedicated profile.
 - Locked to one authorized chat id so it can't be hijacked by a stranger.
 
 **Phase 2 — tools:**
-- `get_current_datetime`, `open_application`, `open_url`, `search_files`
-  (Downloads/Documents/Desktop)
+- `get_current_datetime`, `open_application`, `close_application`,
+  `open_url`, `search_files` (Downloads/Documents/Desktop) — `close_application`
+  tries a normal close first (lets the app prompt to save), verifies it
+  actually closed rather than trusting a false-positive exit code (Windows
+  Store/UWP apps like the Windows 11 Calculator report success while
+  ignoring the close), and only force-kills if asked or if a normal close
+  didn't really work
 - `get_calendar_events` — Google Calendar, read-only
 - `get_unread_emails`, `create_email_draft` — Gmail, read + draft-only
   (never auto-sends)

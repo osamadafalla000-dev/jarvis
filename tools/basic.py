@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime
 import os
+import subprocess
+import time
 from pathlib import Path
 
 from . import tool
@@ -26,6 +28,15 @@ _APP_ALIASES = {
     "vscode": "code.exe",
     "vs code": "code.exe",
     "visual studio code": "code.exe",
+}
+
+# Some apps' actual running process differs from their launch command --
+# most notably Windows 11's Calculator: `calc.exe` is a legacy launcher
+# stub that redirects to the real Store-packaged process, CalculatorApp.exe.
+# taskkill needs the real process name, not the launch command.
+_CLOSE_PROCESS_NAMES = {
+    "calculator": "CalculatorApp.exe",
+    "calc": "CalculatorApp.exe",
 }
 
 
@@ -72,6 +83,77 @@ def open_application(name: str) -> dict:
         return {"status": "opened", "app": command}
     except OSError as exc:
         return {"status": "error", "app": command, "error": str(exc)}
+
+
+@tool(
+    {
+        "name": "close_application",
+        "description": (
+            "Close a running desktop application by name, e.g. 'notepad', "
+            "'calculator', 'chrome'. Tries a normal close first, which lets "
+            "the app prompt to save unsaved work if it has any -- only pass "
+            "force=true if a normal close doesn't work, since that can lose "
+            "unsaved work."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The application's common name.",
+                },
+                "force": {
+                    "type": ["boolean", "null"],
+                    "description": (
+                        "Force-kill instead of a normal close (default false)."
+                    ),
+                },
+            },
+            "required": ["name"],
+        },
+    }
+)
+def close_application(name: str, force: bool = False) -> dict:
+    key = name.strip().lower()
+    exe_name = _CLOSE_PROCESS_NAMES.get(key)
+    if exe_name is None:
+        command = _APP_ALIASES.get(key, name)
+        exe_name = command if command.lower().endswith(".exe") else f"{command}.exe"
+
+    args = ["taskkill", "/IM", exe_name]
+    if force:
+        args.append("/F")
+    result = subprocess.run(args, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return {
+            "status": "error",
+            "app": exe_name,
+            "message": (result.stderr or result.stdout).strip(),
+        }
+
+    if not force:
+        # taskkill returns success as soon as the close is *requested* --
+        # some apps (Windows Store/UWP-packaged ones especially, e.g. the
+        # Windows 11 Calculator) ignore a plain close and keep running.
+        # Verify it's actually gone before reporting success.
+        time.sleep(0.5)
+        check = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
+            capture_output=True,
+            text=True,
+        )
+        if exe_name.lower() in check.stdout.lower():
+            return {
+                "status": "still_running",
+                "app": exe_name,
+                "message": (
+                    "close was requested but the app is still running "
+                    "(common for Windows Store/UWP apps) -- retry with force=true"
+                ),
+            }
+
+    return {"status": "closed", "app": exe_name, "forced": force}
 
 
 @tool(
