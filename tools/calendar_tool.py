@@ -19,7 +19,7 @@ from . import tool
             "type": "object",
             "properties": {
                 "days_ahead": {
-                    "type": "integer",
+                    "type": ["integer", "null"],
                     "description": "How many days ahead to look, starting now (default 1).",
                 }
             },

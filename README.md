@@ -95,6 +95,32 @@ Everything after that is read-only for email/calendar **except** creating
 drafts — Jarvis can draft a reply, but never calls a "send" endpoint, so
 every draft sits in Gmail until you personally open it and hit send.
 
+## Screen vision (Phase 3)
+
+Groq has no working free vision model for this account, so screen vision
+runs entirely **locally** instead via [Ollama](https://ollama.com) (free)
+serving the small `moondream` vision model — no cloud, no API key.
+
+1. Install Ollama: `winget install Ollama.Ollama` (it runs automatically
+   as a background service afterward — check with `ollama --version`).
+2. Pull the vision model once: `ollama pull moondream` (~1.7 GB, one-time).
+3. That's it — `describe_screen` will work as soon as Ollama is running.
+
+## Browser automation (Phase 3)
+
+Uses [Playwright](https://playwright.dev) (free, open-source) to open a
+**visible** Chromium window and fill in one form field at a time.
+
+1. `pip install playwright` (already in `requirements.txt`)
+2. One-time browser download: `python -m playwright install chromium`
+
+**Known limitation:** sites with aggressive bot-detection (Google search
+being the biggest example) will block or CAPTCHA-challenge an automated
+browser — confirmed by testing. For anything search-related, the `web_search`
+tool is the reliable path since it doesn't drive a real browser at all.
+Browser automation is best reserved for ordinary forms/websites (confirmed
+working against Wikipedia's search box, for example).
+
 ## What's built so far
 
 **Phase 1 — core voice loop:**
@@ -115,11 +141,15 @@ every draft sits in Gmail until you personally open it and hit send.
   (git-ignored, stays on your machine)
 - `web_search` — free, no API key, via DDGS
 
+**Phase 3 — tools:**
+- `describe_screen` — local screen vision via Ollama + moondream, free
+- `browser_fill_and_submit` — fills one form field in a visible browser
+  window via Playwright; not reliable against bot-detection-heavy sites
+
 ## Not built (by design)
 
 - **No phone calls** — excluded on purpose, no Twilio/Vapi/phone number of
   any kind.
-- Screen vision, browser automation — optional Phase 3 stretch goals.
 
 ## Notes
 

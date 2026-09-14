@@ -118,7 +118,7 @@ _DEFAULT_SEARCH_ROOTS = [
                     "description": "Filename or partial filename to search for.",
                 },
                 "max_results": {
-                    "type": "integer",
+                    "type": ["integer", "null"],
                     "description": "Maximum number of matches to return (default 10).",
                 },
             },

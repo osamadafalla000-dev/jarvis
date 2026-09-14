@@ -16,7 +16,7 @@ from . import tool
             "properties": {
                 "query": {"type": "string", "description": "The search query."},
                 "max_results": {
-                    "type": "integer",
+                    "type": ["integer", "null"],
                     "description": "Maximum number of results to return (default 5).",
                 },
             },

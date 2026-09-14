@@ -28,7 +28,7 @@ def _service():
             "type": "object",
             "properties": {
                 "max_results": {
-                    "type": "integer",
+                    "type": ["integer", "null"],
                     "description": "Maximum number of emails to return (default 5).",
                 }
             },
