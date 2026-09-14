@@ -36,13 +36,14 @@ SILENCE_RMS_THRESHOLD = float(os.environ.get("JARVIS_SILENCE_RMS_THRESHOLD", "22
 # that got captured from a much longer sentence with a mid-thought pause).
 COMMAND_SILENCE_SECONDS = float(os.environ.get("JARVIS_SILENCE_SECONDS", "1.8"))
 # Lower threshold = accepts weaker/quieter matches (catches "hey jarvis" from
-# further away, at the cost of more false triggers from ambient noise/TV).
-# Gain amplifies the mic signal before the model sees it, since distant
-# speech simply arrives at a much lower amplitude than the model expects.
-# Both are tunable via env vars without touching code, since the right
-# values depend on the room and mic.
-WAKE_WORD_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.4"))
-WAKE_WORD_GAIN = float(os.environ.get("JARVIS_WAKE_GAIN", "3.0"))
+# further away, at the cost of more false triggers from ambient noise/TV --
+# or from just saying "jarvis" with no "hey" in front of it, since a low
+# threshold + high gain lets the model fire on a weak partial match to the
+# back half of the phrase alone). Pulled back from 0.4/3.0 for exactly that
+# reason. Both are tunable via env vars, since the right values depend on
+# the room and mic.
+WAKE_WORD_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.5"))
+WAKE_WORD_GAIN = float(os.environ.get("JARVIS_WAKE_GAIN", "2.0"))
 # "small" was the dominant latency cost in the whole pipeline -- 5+ seconds
 # to transcribe a 5-second utterance on this CPU (no usable GPU path: CUDA
 # Toolkit isn't installed, only the driver). "base" measured 2.5x+ faster

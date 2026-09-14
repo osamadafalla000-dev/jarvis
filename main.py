@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -63,6 +64,20 @@ def run_once() -> None:
 
 FOLLOW_UP_SILENCE_SECONDS = 6.0  # how long to wait for a follow-up before going back to sleep
 
+# Words that don't count as an actual request on their own -- just the wake
+# word, or a bare greeting, with nothing else said.
+_FILLER_WORDS = {"jarvis", "hey", "yo", "hi", "hello", "ok", "okay", "um", "uh"}
+
+
+def _is_just_the_wake_word(text: str) -> bool:
+    """True if text has no real content beyond the name itself/greeting
+    filler -- e.g. just "Jarvis" or "Hey Jarvis" with nothing following.
+    Covers both a false wake-word trigger on the bare name (someone talking
+    ABOUT Jarvis, not TO it) and trailing off right after saying it -- either
+    way, there's no actual request here to answer."""
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    return bool(words) and all(w in _FILLER_WORDS for w in words)
+
 
 def run_loop() -> None:
     """The real assistant loop: always-on wake word -> converse -> repeat.
@@ -105,8 +120,8 @@ def run_loop() -> None:
         recording = listener.listen_for_command(on_detected=_play_ack_async)
         while True:
             text = audio.transcribe(recording)
-            if not text:
-                break  # silence -- conversation's over, go back to sleep
+            if not text or _is_just_the_wake_word(text):
+                break  # silence, or just the name/a greeting -- nothing to answer, go back to sleep
             print(f"You said: {text}")
             reply = jarvis.ask(text)
             print(f"Jarvis: {reply}")
