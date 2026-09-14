@@ -37,6 +37,12 @@ def _screenshot() -> Path:
     return path
 
 
+def _screenshot_img():
+    """Same as _screenshot() but returns the in-memory image directly, for
+    callers (OCR, cropping) that don't need it written to disk."""
+    return ImageGrab.grab()
+
+
 def _describe_change(prompt: str, before_path: Path | None = None) -> tuple[Path, str | None]:
     """Screenshot right now and ask Gemini what actually happened -- ideally
     comparing against a 'before' screenshot taken just before the action, so
@@ -108,8 +114,8 @@ def _group_into_lines(ocr_data: dict) -> list[list[dict]]:
     return list(lines.values())
 
 
-def _ocr_scan(query: str) -> list[dict]:
-    ocr_data = pytesseract.image_to_data(ImageGrab.grab(), output_type=pytesseract.Output.DICT)
+def _ocr_scan(img, query: str) -> list[dict]:
+    ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
     matches = []
     for words in _group_into_lines(ocr_data):
         line_text = " ".join(w["text"] for w in words)
@@ -128,6 +134,57 @@ def _ocr_scan(query: str) -> list[dict]:
     return matches
 
 
+def _describe_candidates(img, matches: list[dict], query: str) -> str | None:
+    """When the same text shows up in several places, OCR alone can't tell
+    them apart -- confirmed live: "click the Jarvis workspace" landed on the
+    wrong one among several matching entries. Crop a zoomed-in region around
+    each candidate and ask Gemini to describe what's actually there for
+    each, numbered to match the match list -- real visual context (which
+    app, which section, what's nearby) instead of guessing among
+    textually-identical options."""
+    try:
+        from llm import GEMINI_BASE_URL, MODEL  # lazy: avoid llm.py's circular import at load time
+        import base64
+        import io
+
+        from openai import OpenAI
+
+        content: list[dict] = [
+            {
+                "type": "text",
+                "text": (
+                    f"The text '{query}' appears in {len(matches)} different places "
+                    "on screen, shown below as numbered crops (1 to "
+                    f"{len(matches)}, same order as the list). For EACH one, on its "
+                    "own line like '1: ...', briefly say what app/window/section "
+                    "it's actually in and anything nearby that distinguishes it "
+                    "from the others -- enough to tell a real user which one is "
+                    "which."
+                ),
+            }
+        ]
+        width, height = img.size
+        for i, m in enumerate(matches, start=1):
+            left = max(0, m["x"] - 220)
+            top = max(0, m["y"] - 70)
+            crop = img.crop((left, top, min(width, left + 440), min(height, top + 140)))
+            buf = io.BytesIO()
+            crop.save(buf, format="PNG")
+            crop_b64 = base64.b64encode(buf.getvalue()).decode()
+            content.append({"type": "text", "text": f"Crop {i}:"})
+            content.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{crop_b64}"}}
+            )
+
+        client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL)
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "user", "content": content}]
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception:  # noqa: BLE001 - best-effort; the raw matches still work without this
+        return None
+
+
 @tool(
     {
         "name": "find_text_on_screen",
@@ -143,11 +200,14 @@ def _ocr_scan(query: str) -> list[dict]:
             "of it, not just the app the user is looking at. A generic "
             "query (e.g. just 'chat' or 'search') can easily match the "
             "wrong instance in a different window and land a click/type "
-            "somewhere unintended. Always check each match's returned "
-            "`text` (the full surrounding line) actually matches the "
-            "expected context before clicking it -- if it's ambiguous, "
-            "prefer a more distinctive phrase, or confirm with "
-            "describe_screen first."
+            "somewhere unintended. When there's more than one match, the "
+            "result includes `context` -- a real per-match visual "
+            "description (which app/section each one is actually in), "
+            "numbered to match the list -- READ IT and pick accordingly "
+            "instead of guessing/defaulting to the first one; that's "
+            "specifically what caused a wrong click before. More than 6 "
+            "matches is too many to usefully compare -- use a more "
+            "distinctive phrase instead."
         ),
         "parameters": {
             "type": "object",
@@ -174,7 +234,8 @@ def find_text_on_screen(text: str) -> dict:
 
     query = text.strip().lower()
     try:
-        matches = _ocr_scan(query)
+        img = _screenshot_img()
+        matches = _ocr_scan(img, query)
         # A page that just navigated/opened can still be rendering its text
         # the instant this runs, especially right after a click -- one retry
         # after a short wait catches that without a real bug in the OCR/
@@ -182,13 +243,31 @@ def find_text_on_screen(text: str) -> dict:
         # blamed for.
         if not matches:
             time.sleep(0.6)
-            matches = _ocr_scan(query)
+            img = _screenshot_img()
+            matches = _ocr_scan(img, query)
     except Exception as exc:  # noqa: BLE001 - surface OCR failures plainly
         return {"status": "error", "message": f"OCR failed: {exc}"}
 
     if not matches:
         return {"status": "not_found", "matches": []}
-    return {"status": "found", "matches": matches[:10]}
+
+    matches = matches[:10]
+    result = {"status": "found", "matches": matches}
+    # Disambiguate visually when there's more than one match -- exactly the
+    # case that went wrong live ("click the Jarvis workspace" hit the wrong
+    # one among several). Capped at 6: beyond that, comparing that many
+    # crops in one vision call gets slow and the query is probably just too
+    # generic -- better to tell the model to narrow it than to guess harder.
+    if 1 < len(matches) <= 6:
+        context = _describe_candidates(img, matches, text)
+        if context:
+            result["context"] = context
+    elif len(matches) > 6:
+        result["note"] = (
+            f"{len(matches)} matches is too many to usefully tell apart -- use a "
+            "more specific/distinctive phrase instead of guessing."
+        )
+    return result
 
 
 @tool(
