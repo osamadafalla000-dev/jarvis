@@ -200,6 +200,100 @@ def close_application(name: str, force: bool = False) -> dict:
     return {"status": "closed", "app": exe_name, "forced": False}
 
 
+# Processes that must never be targeted by close_all_applications -- either
+# they ARE the desktop/OS itself (closing them would break the whole
+# session), or they're Jarvis's own process (closing itself mid-command
+# would be, at best, useless, and at worst leave things half-done).
+_NEVER_CLOSE_PROCESSES = {
+    "explorer.exe",
+    "dwm.exe",
+    "svchost.exe",
+    "system",
+    "csrss.exe",
+    "winlogon.exe",
+    "wininit.exe",
+    "ctfmon.exe",
+    "searchhost.exe",
+    "searchapp.exe",
+    "shellexperiencehost.exe",
+    "startmenuexperiencehost.exe",
+    "textinputhost.exe",
+    "lockapp.exe",
+    "python.exe",
+    "pythonw.exe",
+    "wscript.exe",
+    "conhost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "windowsterminal.exe",
+}
+
+
+@tool(
+    {
+        "name": "close_all_applications",
+        "description": (
+            "Close every visible application window on the desktop (not "
+            "Chrome tabs -- use close_all_tabs for those). Sends each one a "
+            "normal close request, so anything with unsaved work gets a "
+            "chance to prompt 'save changes?' rather than being force-killed. "
+            "System/desktop-critical processes and Jarvis itself are never "
+            "touched."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    }
+)
+def close_all_applications() -> dict:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    WM_CLOSE = 0x0010
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+    closed: list[dict] = []
+    skipped = 0
+
+    def _process_name(pid: int) -> str:
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(260)
+            size = wintypes.DWORD(260)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value.rsplit("\\", 1)[-1].lower()
+            return ""
+        finally:
+            kernel32.CloseHandle(handle)
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def _enum_callback(hwnd, _lparam):
+        nonlocal skipped
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True  # no title -> not a real app window
+
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        proc_name = _process_name(pid.value)
+        if not proc_name or proc_name in _NEVER_CLOSE_PROCESSES:
+            skipped += 1
+            return True
+
+        title_buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, title_buf, length + 1)
+        user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        closed.append({"title": title_buf.value, "process": proc_name})
+        return True
+
+    user32.EnumWindows(_enum_callback, 0)
+    return {"status": "done", "closed": closed, "protected_windows_skipped": skipped}
+
+
 @tool(
     {
         "name": "open_url",
