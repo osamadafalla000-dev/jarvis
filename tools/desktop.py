@@ -31,6 +31,48 @@ if os.path.exists(TESSERACT_CMD):
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 
+def _screenshot_and_describe(prompt: str) -> tuple[Path, str | None]:
+    """Screenshot right now and ask Gemini what's actually visible -- so
+    click_at/type_text's result carries real, observed feedback the model
+    itself can read, instead of a bare "status: clicked/typed" it has no way
+    to verify. Without this, a missed click or a field that didn't actually
+    focus reads identical to a successful one from the tool's return value
+    alone -- confirmed live: Jarvis reported a click and a "history opened"
+    as successful when neither one had actually happened on screen.
+    Description is best-effort (None on any failure) -- a vision hiccup
+    here shouldn't break the click/type action that already happened."""
+    screenshot_path = Path(tempfile.mktemp(suffix=".png"))
+    ImageGrab.grab().save(screenshot_path, format="PNG")
+
+    try:
+        from llm import GEMINI_BASE_URL, MODEL  # lazy: avoid llm.py's circular import at load time
+        import base64
+        from openai import OpenAI
+
+        image_b64 = base64.b64encode(screenshot_path.read_bytes()).decode()
+        client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL)
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                        },
+                    ],
+                }
+            ],
+        )
+        description = (response.choices[0].message.content or "").strip()
+    except Exception:  # noqa: BLE001 - best-effort; the action itself already happened
+        description = None
+
+    return screenshot_path, description
+
+
 def _group_into_lines(ocr_data: dict) -> list[list[dict]]:
     """pytesseract's image_to_data is word-level -- group words that share a
     (block, paragraph, line) back into lines, each word keeping its own
@@ -136,7 +178,11 @@ def find_text_on_screen(text: str) -> dict:
             "targets (an icon, an image) since its vision model is weak at "
             "exact text/position. For links/buttons/fields inside Jarvis's "
             "own browser tabs specifically, browser_fill_and_submit is more "
-            "reliable since it targets by label instead of guessing pixels."
+            "reliable since it targets by label instead of guessing pixels. "
+            "Returns `after` -- what's actually visible right after the "
+            "click -- trust that over assuming the click landed correctly; "
+            "a click can miss (stale coordinates, a still-animating menu, "
+            "the wrong window in front) and still return 'clicked'."
         ),
         "parameters": {
             "type": "object",
@@ -157,7 +203,24 @@ def click_at(x: int, y: int, double: bool = False) -> dict:
         pyautogui.doubleClick(x, y)
     else:
         pyautogui.click(x, y)
-    return {"status": "clicked", "x": x, "y": y, "double": double}
+    time.sleep(0.4)  # let menus/dropdowns/page transitions actually settle
+
+    screenshot_path, description = _screenshot_and_describe(
+        "A click just happened at the crosshair-ish center of this screen. "
+        "In one or two sentences: what's visible right now, and does it "
+        "look like the click actually landed on something (a menu opened, "
+        "a page changed, a field got focus, etc.) or did nothing visible "
+        "happen?"
+    )
+
+    return {
+        "status": "clicked",
+        "x": x,
+        "y": y,
+        "double": double,
+        "after": description or "(couldn't analyze the result -- check manually if unsure)",
+        "_attachment_path": str(screenshot_path),
+    }
 
 
 @tool(
@@ -175,9 +238,12 @@ def click_at(x: int, y: int, double: bool = False) -> dict:
             "clicks first now. Get x/y from find_text_on_screen (or "
             "describe_screen for a non-text target). Pastes via the "
             "clipboard so any text (including emoji/unicode) comes through "
-            "reliably, restores "
-            "whatever was on the clipboard before, and returns a screenshot "
-            "taken right after so the result can be checked."
+            "reliably, and restores whatever was on the clipboard before. "
+            "Returns `after` -- what's actually visible right after typing "
+            "-- trust that over assuming it worked; the click that's "
+            "supposed to focus the field can itself miss, in which case "
+            "nothing was typed anywhere useful even though this still "
+            "returns 'typed'."
         ),
         "parameters": {
             "type": "object",
@@ -222,12 +288,17 @@ def type_text(text: str, x: int, y: int, press_enter: bool = False) -> dict:
         time.sleep(0.1)
         pyperclip.copy(previous_clipboard)
 
-    screenshot_path = Path(tempfile.mktemp(suffix=".png"))
-    ImageGrab.grab().save(screenshot_path, format="PNG")
+    screenshot_path, description = _screenshot_and_describe(
+        f"Text was just typed into a field on this screen: {text!r}. In one "
+        "or two sentences: what's visible right now, and does that text "
+        "actually appear typed into a field, or does nothing visible show "
+        "it worked?"
+    )
 
     return {
         "status": "typed",
         "text": text,
         "pressed_enter": press_enter,
+        "after": description or "(couldn't analyze the result -- check manually if unsure)",
         "_attachment_path": str(screenshot_path),
     }
