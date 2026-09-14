@@ -12,6 +12,12 @@ from tools import call_tool, get_tool_schemas
 
 MODEL = os.environ.get("JARVIS_MODEL", "openai/gpt-oss-120b")
 
+# How many user turns of conversation history to keep. Groq's free tier is
+# tight on tokens (8K TPM / 200K TPD for gpt-oss-120b) and every call resends
+# the full history, so letting it grow unbounded across a conversation burns
+# through that budget fast -- see llm.py's Jarvis._trim_history.
+MAX_HISTORY_TURNS = 6
+
 SYSTEM_PROMPT = (
     "You're Jarvis. Talk like a sharp, laid-back friend texting back — not a "
     "formal assistant, not a butler, never call the user 'sir'. Casual "
@@ -50,7 +56,19 @@ class Jarvis:
         # the Telegram bot) can send these; voice-only front-ends can ignore it.
         self.last_attachments: list[str] = []
 
+    def _trim_history(self) -> None:
+        """Drop the oldest turns once history exceeds MAX_HISTORY_TURNS,
+        keeping the system prompt plus the most recent turns. Only cuts at
+        user-message boundaries -- an assistant's tool_calls message has to
+        stay adjacent to its tool results, or the API rejects the request."""
+        user_indices = [i for i, m in enumerate(self.history) if m["role"] == "user"]
+        if len(user_indices) <= MAX_HISTORY_TURNS:
+            return
+        cutoff = user_indices[-MAX_HISTORY_TURNS]
+        self.history = [self.history[0], *self.history[cutoff:]]
+
     def ask(self, user_text: str) -> str:
+        self._trim_history()
         history_len_before = len(self.history)
         self.history.append({"role": "user", "content": user_text})
         self.last_attachments = []
