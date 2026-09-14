@@ -31,46 +31,59 @@ if os.path.exists(TESSERACT_CMD):
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 
-def _screenshot_and_describe(prompt: str) -> tuple[Path, str | None]:
-    """Screenshot right now and ask Gemini what's actually visible -- so
-    click_at/type_text's result carries real, observed feedback the model
-    itself can read, instead of a bare "status: clicked/typed" it has no way
-    to verify. Without this, a missed click or a field that didn't actually
-    focus reads identical to a successful one from the tool's return value
-    alone -- confirmed live: Jarvis reported a click and a "history opened"
-    as successful when neither one had actually happened on screen.
-    Description is best-effort (None on any failure) -- a vision hiccup
-    here shouldn't break the click/type action that already happened."""
-    screenshot_path = Path(tempfile.mktemp(suffix=".png"))
-    ImageGrab.grab().save(screenshot_path, format="PNG")
+def _screenshot() -> Path:
+    path = Path(tempfile.mktemp(suffix=".png"))
+    ImageGrab.grab().save(path, format="PNG")
+    return path
+
+
+def _describe_change(prompt: str, before_path: Path | None = None) -> tuple[Path, str | None]:
+    """Screenshot right now and ask Gemini what actually happened -- ideally
+    comparing against a 'before' screenshot taken just before the action, so
+    the model can judge whether anything actually changed instead of just
+    describing one static frame. A single after-only frame often looks
+    perfectly normal even when a click missed its target entirely (clicking
+    empty space still leaves a plausible-looking screen) -- an explicit
+    before/after comparison is a much stronger signal than that.
+
+    Without this, click_at/type_text's result was a bare "status:
+    clicked/typed" the model had no way to verify -- confirmed live: Jarvis
+    reported a click and a "history opened" as successful when neither had
+    actually happened on screen. Description is best-effort (None on any
+    failure) -- a vision hiccup here shouldn't break the action that already
+    happened. before_path, if given, is deleted once used (it's a throwaway
+    comparison frame, not the result screenshot returned to the caller)."""
+    after_path = _screenshot()
 
     try:
         from llm import GEMINI_BASE_URL, MODEL  # lazy: avoid llm.py's circular import at load time
         import base64
         from openai import OpenAI
 
-        image_b64 = base64.b64encode(screenshot_path.read_bytes()).decode()
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        if before_path is not None:
+            before_b64 = base64.b64encode(before_path.read_bytes()).decode()
+            content.append({"type": "text", "text": "BEFORE the action:"})
+            content.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{before_b64}"}}
+            )
+            content.append({"type": "text", "text": "AFTER the action:"})
+        after_b64 = base64.b64encode(after_path.read_bytes()).decode()
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{after_b64}"}})
+
         client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL)
         response = client.chat.completions.create(
             model=MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{image_b64}"},
-                        },
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": content}],
         )
         description = (response.choices[0].message.content or "").strip()
     except Exception:  # noqa: BLE001 - best-effort; the action itself already happened
         description = None
+    finally:
+        if before_path is not None:
+            before_path.unlink(missing_ok=True)
 
-    return screenshot_path, description
+    return after_path, description
 
 
 def _group_into_lines(ocr_data: dict) -> list[list[dict]]:
@@ -93,6 +106,26 @@ def _group_into_lines(ocr_data: dict) -> list[list[dict]]:
             }
         )
     return list(lines.values())
+
+
+def _ocr_scan(query: str) -> list[dict]:
+    ocr_data = pytesseract.image_to_data(ImageGrab.grab(), output_type=pytesseract.Output.DICT)
+    matches = []
+    for words in _group_into_lines(ocr_data):
+        line_text = " ".join(w["text"] for w in words)
+        if query not in line_text.lower():
+            continue
+        # Narrow to just the word(s) actually containing the query, so the
+        # click point is precise instead of the whole line's midpoint.
+        target_words = [w for w in words if query in w["text"].lower()] or words
+        left = min(w["left"] for w in target_words)
+        top = min(w["top"] for w in target_words)
+        right = max(w["left"] + w["width"] for w in target_words)
+        bottom = max(w["top"] + w["height"] for w in target_words)
+        matches.append(
+            {"text": line_text.strip(), "x": (left + right) // 2, "y": (top + bottom) // 2}
+        )
+    return matches
 
 
 @tool(
@@ -139,27 +172,19 @@ def find_text_on_screen(text: str) -> dict:
             ),
         }
 
+    query = text.strip().lower()
     try:
-        ocr_data = pytesseract.image_to_data(ImageGrab.grab(), output_type=pytesseract.Output.DICT)
+        matches = _ocr_scan(query)
+        # A page that just navigated/opened can still be rendering its text
+        # the instant this runs, especially right after a click -- one retry
+        # after a short wait catches that without a real bug in the OCR/
+        # matching logic itself, which found_text_on_screen sometimes got
+        # blamed for.
+        if not matches:
+            time.sleep(0.6)
+            matches = _ocr_scan(query)
     except Exception as exc:  # noqa: BLE001 - surface OCR failures plainly
         return {"status": "error", "message": f"OCR failed: {exc}"}
-
-    query = text.strip().lower()
-    matches = []
-    for words in _group_into_lines(ocr_data):
-        line_text = " ".join(w["text"] for w in words)
-        if query not in line_text.lower():
-            continue
-        # Narrow to just the word(s) actually containing the query, so the
-        # click point is precise instead of the whole line's midpoint.
-        target_words = [w for w in words if query in w["text"].lower()] or words
-        left = min(w["left"] for w in target_words)
-        top = min(w["top"] for w in target_words)
-        right = max(w["left"] + w["width"] for w in target_words)
-        bottom = max(w["top"] + w["height"] for w in target_words)
-        matches.append(
-            {"text": line_text.strip(), "x": (left + right) // 2, "y": (top + bottom) // 2}
-        )
 
     if not matches:
         return {"status": "not_found", "matches": []}
@@ -246,18 +271,21 @@ def scroll(direction: str, amount: int = 5, x: int | None = None, y: int | None 
     }
 )
 def click_at(x: int, y: int, double: bool = False) -> dict:
+    before_path = _screenshot()
+
     if double:
         pyautogui.doubleClick(x, y)
     else:
         pyautogui.click(x, y)
     time.sleep(0.4)  # let menus/dropdowns/page transitions actually settle
 
-    screenshot_path, description = _screenshot_and_describe(
-        "A click just happened at the crosshair-ish center of this screen. "
-        "In one or two sentences: what's visible right now, and does it "
-        "look like the click actually landed on something (a menu opened, "
-        "a page changed, a field got focus, etc.) or did nothing visible "
-        "happen?"
+    screenshot_path, description = _describe_change(
+        f"A click just happened at pixel ({x}, {y}) on this screen. Compare "
+        "the before/after screenshots below. In one or two sentences: what "
+        "actually changed (a menu opened, a page navigated, a field got "
+        "focus/highlighted, etc.), or do they look the same -- meaning the "
+        "click likely missed and nothing happened?",
+        before_path=before_path,
     )
 
     return {
@@ -314,6 +342,8 @@ def click_at(x: int, y: int, double: bool = False) -> dict:
     }
 )
 def type_text(text: str, x: int, y: int, press_enter: bool = False) -> dict:
+    before_path = _screenshot()
+
     pyautogui.click(x, y)
     time.sleep(0.15)  # let the click-triggered focus change actually land
 
@@ -335,11 +365,13 @@ def type_text(text: str, x: int, y: int, press_enter: bool = False) -> dict:
         time.sleep(0.1)
         pyperclip.copy(previous_clipboard)
 
-    screenshot_path, description = _screenshot_and_describe(
-        f"Text was just typed into a field on this screen: {text!r}. In one "
-        "or two sentences: what's visible right now, and does that text "
-        "actually appear typed into a field, or does nothing visible show "
-        "it worked?"
+    screenshot_path, description = _describe_change(
+        f"A field at pixel ({x}, {y}) was just clicked and this text pasted "
+        f"into it: {text!r}. Compare the before/after screenshots below. In "
+        "one or two sentences: does that text actually appear typed into a "
+        "field now, or do they look the same -- meaning the click likely "
+        "missed and nothing was typed anywhere useful?",
+        before_path=before_path,
     )
 
     return {

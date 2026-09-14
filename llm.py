@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import openai
 from openai import OpenAI
@@ -132,7 +133,16 @@ class Jarvis:
                     args = json.loads(call.function.arguments or "{}")
                     result = call_tool(call.function.name, args)
                     if isinstance(result, dict) and "_attachment_path" in result:
-                        self.last_attachments.append(result.pop("_attachment_path"))
+                        attachment_path = result.pop("_attachment_path")
+                        # Keep only the most recent screenshot per ask() --
+                        # earlier ones already served their purpose (feeding
+                        # that tool's own `after` verification back into the
+                        # conversation); sending every intermediate one as a
+                        # separate Telegram photo for one multi-step task
+                        # (e.g. click then type) was confusing, not helpful.
+                        for old_path in self.last_attachments:
+                            Path(old_path).unlink(missing_ok=True)
+                        self.last_attachments = [attachment_path]
                     self.history.append(
                         {
                             "role": "tool",
@@ -147,6 +157,8 @@ class Jarvis:
             # (a user message with no real reply) sitting in history, since
             # that would silently waste tokens re-sending it on the next ask().
             del self.history[history_len_before:]
+            for old_path in self.last_attachments:
+                Path(old_path).unlink(missing_ok=True)
             self.last_attachments = []
             return _friendly_api_error(exc)
 
