@@ -139,12 +139,23 @@ context, so it's gone.)
 ## Browser automation (Phase 3)
 
 Uses [Playwright](https://playwright.dev) (free, open-source) to drive
-Jarvis's own **persistent, visible Google Chrome window** (`browser_session.py`
-— the real installed Chrome via `channel="chrome"`, not Edge and not
-Playwright's bundled Chromium) running in its **own dedicated profile**
-(`.chrome-profile/`, git-ignored) — completely separate from your actual
-day-to-day Chrome profile, logins, cookies, and history. One window, kept
-open across tool calls.
+your **actual, real Chrome** via its remote-debugging port
+(`browser_session.py`) — not a separate profile. Jarvis sees and can act on
+whatever's logged in and every open tab, the same as you.
+
+(An earlier design used a separate, isolated Chrome profile instead —
+safer in principle, but Google sites always opened logged out and there
+was no working way to fix that: copying login cookies into the isolated
+profile turned out not to work on modern Chrome, since App-Bound Encryption
+ties them to the profile they came from. Connecting to the real browser
+was the tradeoff made instead, deliberately, after that came up short.)
+
+**Setup:** close every Chrome window (check the taskbar/system tray for
+lingering background processes too), then launch Chrome via
+`launch_chrome_debuggable.vbs` instead of your normal shortcut whenever you
+want Jarvis to be able to control it. Everything else about Chrome — your
+profile, extensions, open tabs — works exactly as normal; it just also
+listens on `localhost:9222` for Jarvis to connect to.
 
 - `open_url` and `browser_fill_and_submit` open tabs in this Chrome window
   instead of the system default browser.
@@ -159,10 +170,6 @@ open across tool calls.
   — tabs stick around until explicitly closed, and these tools see *all*
   open tabs, including ones you opened yourself in that same window.
 
-Setup:
-1. `pip install playwright` (already in `requirements.txt`)
-2. Google Chrome must be installed normally (not managed by Playwright)
-
 **Known limitation:** sites with aggressive bot-detection (Google search
 being the biggest example) will block or CAPTCHA-challenge an automated
 browser — confirmed by testing. For anything search-related, the `web_search`
@@ -172,11 +179,10 @@ working against Wikipedia's search box, including the full open -> fill ->
 wait -> screenshot -> close-tab flow, and acting on an already-open tab
 rather than opening a new one).
 
-**If the bot process is ever force-killed** (crash, forced restart) instead
-of stopped normally, its Chrome window can be orphaned — visible but no
-longer connected to anything, since Windows doesn't auto-close child
-processes when a parent dies. Just close that window by hand; the next
-normal run starts a fresh one in the same dedicated profile.
+**If Chrome isn't running with the debug port enabled**, browser tools fail
+with a clear message telling you to relaunch it via
+`launch_chrome_debuggable.vbs` — Jarvis never tries to force-close or
+restart your browser itself, since it doesn't own that window's lifecycle.
 
 ## What's built so far
 
@@ -210,8 +216,8 @@ normal run starts a fresh one in the same dedicated profile.
 - `click_at`, `type_text` — desktop-wide mouse/keyboard control, any
   window or app, not just Jarvis's own browser tabs
 - `browser_fill_and_submit`, `list_open_tabs`, `screenshot_tab`,
-  `close_tab`, `close_all_tabs` — isolated, persistent Chrome window with
-  full control over every open tab, new or existing
+  `close_tab`, `close_all_tabs` — connected to the user's real Chrome, full
+  control over every open tab, new or existing
 
 **Personality:** casual, dry-witted, talks like a sharp friend texting
 back rather than a formal assistant — light slang/emoji only when it

@@ -1,8 +1,10 @@
 """Basic browser automation via Playwright (free, open-source).
 
-Uses Jarvis's one persistent, visible Google Chrome window (browser_session)
-so the user can see and take over what Jarvis is doing, and so the opened
-tab stays around afterward — manage it with list_open_tabs / close_tab.
+Uses Jarvis's one Google Chrome window (browser_session), connected to the
+user's real, already-running Chrome via its remote-debugging port -- so the
+user can see and take over what Jarvis is doing, whatever's already logged
+in works, and the opened tab stays around afterward — manage it with
+list_open_tabs / close_tab.
 """
 
 from __future__ import annotations
@@ -11,41 +13,6 @@ import tempfile
 from pathlib import Path
 
 from . import tool
-
-
-@tool(
-    {
-        "name": "switch_browser_profile",
-        "description": (
-            "Switch which Google account Jarvis's browser is signed into, "
-            "by copying that account's login cookies from the user's real "
-            "Chrome into Jarvis's own browser window -- so Gmail, Docs, etc. "
-            "open already logged in as that account instead of logged out. "
-            "Closes any currently open tabs (fresh browser session). Only "
-            "call this with one of the exact profile names offered -- there "
-            "is no other account to pick."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "profile": {
-                    "type": "string",
-                    # Keep in sync with browser_session.ALLOWED_GOOGLE_PROFILES --
-                    # duplicated here (not imported) so this module stays free of
-                    # a top-level Playwright import, matching every other tool in
-                    # this file, which imports browser_session lazily instead.
-                    "enum": ["default", "gemsgfm", "badawithe", "osamami"],
-                    "description": "Which account to switch to.",
-                }
-            },
-            "required": ["profile"],
-        },
-    }
-)
-def switch_browser_profile(profile: str) -> dict:
-    import browser_session
-
-    return browser_session.sync_google_login(profile)
 
 
 @tool(

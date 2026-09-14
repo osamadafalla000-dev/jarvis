@@ -129,13 +129,12 @@ def _is_process_running(exe_name: str) -> bool | None:
 def close_application(name: str, force: bool = False) -> dict:
     key = name.strip().lower()
 
-    # taskkill matches by image name across the WHOLE machine, not just the
-    # instance the user meant -- for Chrome that would also hit Jarvis's own
-    # isolated automation window (browser_session.py's whole point is that
-    # it's separate from the user's real Chrome) as well as any unrelated
-    # Chrome window the user has open. Too risky to allow; the browser tools
-    # (close_tab / close_all_tabs) are the correct, precise way to close
-    # Jarvis's own tabs instead.
+    # taskkill matches by image name across the WHOLE machine -- for Chrome
+    # that means EVERY window, and since browser_session.py now connects to
+    # the user's real, already-running Chrome (not a separate isolated
+    # instance), force-killing it this way would kill everything: all the
+    # user's own tabs, not just Jarvis's. Too risky to allow; close_tab /
+    # close_all_tabs are the correct, precise way to close Jarvis's own tabs.
     if key in ("chrome", "google chrome"):
         return {
             "status": "error",
@@ -200,8 +199,13 @@ def close_application(name: str, force: bool = False) -> dict:
 
 # Processes that must never be targeted by close_all_applications -- either
 # they ARE the desktop/OS itself (closing them would break the whole
-# session), or they're Jarvis's own process (closing itself mid-command
-# would be, at best, useless, and at worst leave things half-done).
+# session), they're Jarvis's own process (closing itself mid-command would
+# be, at best, useless, and at worst leave things half-done), or -- chrome.exe
+# specifically -- it's the user's REAL browser now (browser_session.py
+# connects to their actual running Chrome, not an isolated copy), so a blunt
+# WM_CLOSE-everything pass could take down every tab, every login, an
+# active call, all of it. close_tab/close_all_tabs are the precise way to
+# close Jarvis's own tabs instead.
 _NEVER_CLOSE_PROCESSES = {
     "explorer.exe",
     "dwm.exe",
@@ -224,6 +228,7 @@ _NEVER_CLOSE_PROCESSES = {
     "cmd.exe",
     "powershell.exe",
     "windowsterminal.exe",
+    "chrome.exe",
 }
 
 

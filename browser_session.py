@@ -1,101 +1,59 @@
-"""A single persistent, visible Google Chrome window shared by every
-browser-related tool, using its own dedicated profile (isolated from the
-user's real day-to-day Chrome profile/session — never touches their actual
-logins, history, or cookies). Tabs stay open across tool calls, including
-ones the user opens by hand in that same window, and can be listed/closed/
-acted on later by any tool.
+"""Jarvis's browser control: connects to the user's REAL, already-running
+Chrome via its remote-debugging (CDP) port, instead of a separate isolated
+profile. This gives Jarvis the user's actual logged-in sessions directly.
 
-Self-healing: if the browser connection has died (crashed, closed by hand,
-etc.) any operation transparently relaunches a fresh session and retries
-once, instead of leaving the process stuck with a dead reference.
+A prior isolated-profile design tried copying login cookies from the
+user's real Chrome into a separate profile instead -- that turned out not
+to work on modern Chrome: App-Bound Encryption ties cookies to the specific
+profile they were encrypted for, specifically to prevent copying them
+elsewhere. Confirmed live (copied cookies, opened Gmail, landed on the
+logged-out marketing page instead of an inbox) before abandoning it.
 
-Google login: Jarvis's profile starts logged out (it's a separate profile
-dir, not the user's real one), which meant every Google site opened logged
-out too. sync_google_login() copies the login cookies from one of the
-user's REAL Chrome profiles into Jarvis's isolated one, so sites open
-already signed in without Jarvis ever sharing a live browser process with
-the user's actual day-to-day Chrome. ALLOWED_GOOGLE_PROFILES is a hardcoded
-allowlist, not something the LLM can pick freely -- this machine has other
-people's Google accounts logged into other Chrome profiles (e.g. a friend's
-"Maria" profile), and those are deliberately NOT in this dict, so there's
-no code path that can ever read their cookies, regardless of what any
-prompt or tool argument says.
+The tradeoff of connecting directly instead: Jarvis now has the same
+access the user has in that Chrome window -- whatever's logged in, every
+open tab -- not a sandboxed copy. Chrome has to be launched with
+--remote-debugging-port first (see launch_chrome_debuggable.vbs); it can't
+be added to an already-running Chrome retroactively.
+
+Self-healing: if the CDP connection has died (Chrome closed, debug port
+unreachable, etc.) any operation raises a clear, actionable error instead
+of a cryptic Playwright traceback.
 """
 
 from __future__ import annotations
 
 import atexit
 import os
-import shutil
-from pathlib import Path
 from typing import Callable, TypeVar
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 _playwright = None
+_browser: Browser | None = None
 _context: BrowserContext | None = None
 
-PROFILE_DIR = Path(__file__).resolve().parent / ".chrome-profile"
-
-# friendly name -> real Chrome profile folder name (under
-# %LOCALAPPDATA%\Google\Chrome\User Data). Only the user's own profiles --
-# never add a profile here without confirming whose account it actually is.
-ALLOWED_GOOGLE_PROFILES = {
-    "default": "Default",  # osamadafalla2@gmail.com, main/last-used
-    "gemsgfm": "Profile 1",  # osama.d_5638@gemsgfm.com
-    "badawithe": "Profile 3",  # badawithegoat@gmail.com
-    "osamami": "Profile 4",  # osamadafalla294@gmail.com
-}
+CDP_PORT = int(os.environ.get("JARVIS_CHROME_DEBUG_PORT", "9222"))
+CDP_URL = f"http://localhost:{CDP_PORT}"
 
 T = TypeVar("T")
 
 
-def sync_google_login(profile_key: str) -> dict:
-    """Copy Google login cookies from one of the user's real Chrome
-    profiles (see ALLOWED_GOOGLE_PROFILES) into Jarvis's isolated profile,
-    then restart the browser session so the next tab opened picks it up.
-    """
-    if profile_key not in ALLOWED_GOOGLE_PROFILES:
-        return {
-            "status": "error",
-            "message": f"'{profile_key}' isn't an allowed profile. Choose one of: "
-            f"{', '.join(ALLOWED_GOOGLE_PROFILES)}.",
-        }
-
-    folder = ALLOWED_GOOGLE_PROFILES[profile_key]
-    source = Path(os.environ["LOCALAPPDATA"]) / "Google" / "Chrome" / "User Data" / folder / "Network" / "Cookies"
-    if not source.exists():
-        return {"status": "error", "message": f"couldn't find that profile's cookies at {source}"}
-
-    dest = PROFILE_DIR / "Default" / "Network" / "Cookies"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    # Close Jarvis's own browser first so nothing has the destination file
-    # open while we overwrite it.
-    _reset()
-    shutil.copyfile(source, dest)
-
-    return {"status": "synced", "profile": profile_key}
-
-
 def _reset() -> None:
-    global _playwright, _context
-    if _context is not None:
-        try:
-            _context.close()
-        except Exception:  # noqa: BLE001
-            pass
+    """Drop our connection to Chrome -- never closes the actual browser or
+    its tabs. We don't own its lifecycle; the user does."""
+    global _playwright, _browser, _context
     if _playwright is not None:
         try:
             _playwright.stop()
         except Exception:  # noqa: BLE001
             pass
     _context = None
+    _browser = None
     _playwright = None
 
 
 def get_context(force_new: bool = False) -> BrowserContext:
-    global _playwright, _context
+    global _playwright, _browser, _context
 
     if force_new:
         _reset()
@@ -108,14 +66,22 @@ def get_context(force_new: bool = False) -> BrowserContext:
             _reset()
 
     _playwright = sync_playwright().start()
-    PROFILE_DIR.mkdir(exist_ok=True)
-    # launch_persistent_context with channel="chrome": the real installed
-    # Google Chrome (not Edge, not Playwright's bundled Chromium), but in a
-    # dedicated profile dir Jarvis owns -- not the user's actual default
-    # Chrome profile.
-    _context = _playwright.chromium.launch_persistent_context(
-        str(PROFILE_DIR), channel="chrome", headless=False
-    )
+    try:
+        _browser = _playwright.chromium.connect_over_cdp(CDP_URL)
+    except Exception as exc:
+        _playwright.stop()
+        _playwright = None
+        raise RuntimeError(
+            "Can't reach Chrome's remote-debugging port -- Chrome needs to be "
+            "running with it enabled, which only takes effect at launch. Close "
+            "every Chrome window (check the taskbar/system tray for lingering "
+            "background processes too), then reopen it via "
+            "launch_chrome_debuggable.vbs, and try again."
+        ) from exc
+
+    # The browser's own existing context -- the user's actual, already
+    # logged-in profile and open tabs, not a fresh/incognito one.
+    _context = _browser.contexts[0] if _browser.contexts else _browser.new_context()
     return _context
 
 
