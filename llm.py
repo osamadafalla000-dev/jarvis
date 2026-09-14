@@ -34,6 +34,14 @@ MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.5-flash-lite")
 # budget faster than it needs to -- see llm.py's Jarvis._trim_history.
 MAX_HISTORY_TURNS = 6
 
+# How many tool-call round-trips a single ask() can make before giving up.
+# 5 was tuned back when most requests were single-tool (get_current_datetime,
+# open_url). Desktop automation tasks (find_text_on_screen -> click_at ->
+# type_text, plus a describe_screen check) routinely need 4-6 rounds on
+# their own, so 5 was cutting real, in-progress tasks off -- that's what
+# "I got stuck juggling tools" actually meant, not that something was wrong.
+MAX_TOOL_ROUNDS = 10
+
 SYSTEM_PROMPT = (
     "You're Jarvis. Talk like a sharp, laid-back friend texting back — not a "
     "formal assistant, not a butler, never call the user 'sir'. Casual "
@@ -90,7 +98,7 @@ class Jarvis:
         self.last_attachments = []
 
         try:
-            for _ in range(5):  # cap tool-call round-trips to avoid infinite loops
+            for _ in range(MAX_TOOL_ROUNDS):
                 response = self.client.chat.completions.create(
                     model=MODEL,
                     messages=self.history,

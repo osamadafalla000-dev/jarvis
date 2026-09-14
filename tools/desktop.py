@@ -63,9 +63,16 @@ def _group_into_lines(ocr_data: dict) -> list[list[dict]]:
             "click or type into, since describe_screen's local vision model "
             "is weak at exact text reading and position. Matches are "
             "case-insensitive substrings, so a short distinctive word or "
-            "phrase works best. Returns every match if the text appears "
-            "more than once (e.g. in a list) -- use surrounding context to "
-            "pick the right one, or ask the user which one they meant."
+            "phrase works best -- but 'anywhere on screen' means literally "
+            "that: every open window, every browser tab, the taskbar, all "
+            "of it, not just the app the user is looking at. A generic "
+            "query (e.g. just 'chat' or 'search') can easily match the "
+            "wrong instance in a different window and land a click/type "
+            "somewhere unintended. Always check each match's returned "
+            "`text` (the full surrounding line) actually matches the "
+            "expected context before clicking it -- if it's ambiguous, "
+            "prefer a more distinctive phrase, or confirm with "
+            "describe_screen first."
         ),
         "parameters": {
             "type": "object",
