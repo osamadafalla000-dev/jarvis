@@ -51,6 +51,33 @@ URLs, and local file search), and speak the reply back.
 - `python audio.py` — plays a one-line test sentence to confirm TTS
   playback (`ffplay`) works at all.
 
+## Auto-start at login (always-on, like a real assistant)
+
+So you don't have to manually run `python main.py` / `python telegram_bot.py`
+every time — both are set up to start automatically, hidden (no console
+window), whenever you log into Windows.
+
+**How it works:** `run_jarvis.vbs` and `run_telegram_bot.vbs` launch each
+script hidden via `wscript.exe`, logging output to `jarvis_log.txt` /
+`telegram_bot_log.txt` so you can check on them. Copies of both live in
+your Startup folder (`shell:startup` — paste that into Windows Explorer's
+address bar to open it), which Windows runs automatically at every logon.
+
+(Task Scheduler would normally be the more robust way to do this — restart
+on crash, etc. — but task creation was blocked by a permission restriction
+on this machine, so the Startup folder is the fallback. It works the same
+day-to-day, just without auto-restart-on-crash.)
+
+**To check if it's running:** open Task Manager, or check the log files —
+`jarvis_log.txt` should say `Jarvis is listening for "hey jarvis"...` and
+`telegram_bot_log.txt` should say `Jarvis Telegram bot is running.`
+
+**To stop it running automatically:** delete `run_jarvis.vbs` and/or
+`run_telegram_bot.vbs` from the Startup folder (`shell:startup`). To stop
+an already-running hidden instance, end its `python.exe` process in Task
+Manager (or `taskkill /IM python.exe /F` closes *all* Python processes —
+careful if you have other Python things running).
+
 ## Using it from your phone (Telegram bot)
 
 Runs via long-polling — no port-forwarding, public IP, or paid tunnel

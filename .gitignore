@@ -9,3 +9,5 @@ token.json
 .cache/
 notes/
 .chrome-profile/
+jarvis_log.txt
+telegram_bot_log.txt
