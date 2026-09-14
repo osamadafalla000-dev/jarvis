@@ -19,7 +19,7 @@ import sounddevice as sd
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord expects 80ms (1280 samples @ 16kHz) frames
 WAKE_WORD_MODEL = "hey_jarvis"
-TTS_VOICE = "en-GB-RyanNeural"
+TTS_VOICE = "en-CA-LiamNeural"
 # A livelier, more human delivery -- same voice and same wording (that's
 # SYSTEM_PROMPT's job, in llm.py), just less flat/robotic prosody.
 TTS_RATE = os.environ.get("JARVIS_TTS_RATE", "+8%")
