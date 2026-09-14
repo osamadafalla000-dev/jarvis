@@ -94,6 +94,9 @@ class Jarvis:
 
 def _friendly_api_error(exc: groq.APIError) -> str:
     if isinstance(exc, groq.RateLimitError):
+        wait = _rate_limit_wait_seconds(exc)
+        if wait is not None:
+            return f"Hit Groq's free-tier limit — resets in about {_format_wait(wait)}, try again then."
         return (
             "Hit Groq's free-tier rate limit — give it a few minutes and "
             "ask again."
@@ -101,3 +104,22 @@ def _friendly_api_error(exc: groq.APIError) -> str:
     if isinstance(exc, groq.APIConnectionError):
         return "Couldn't reach Groq's API — check your connection and try again."
     return "The brain's API hiccuped on that one — try again in a bit."
+
+
+def _rate_limit_wait_seconds(exc: groq.RateLimitError) -> float | None:
+    """Groq's 429 response carries a Retry-After header with the exact
+    number of seconds until enough quota frees up -- use that instead of
+    guessing "a few minutes", which is often wildly off (the free tier's
+    daily token cap can take much longer, or a per-minute cap far less)."""
+    try:
+        return float(exc.response.headers.get("retry-after"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _format_wait(seconds: float) -> str:
+    seconds = max(1, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    return f"{minutes}m{secs}s" if secs else f"{minutes}m"
