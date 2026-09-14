@@ -5,7 +5,7 @@ APIs, no subscriptions, no phone integration.
 
 - **Wake word:** [openWakeWord](https://github.com/dscripka/openWakeWord) (local, pretrained "hey jarvis" model)
 - **Speech-to-text:** `faster-whisper` (local, runs on CPU)
-- **Brain:** [Groq](https://console.groq.com) free API tier, `openai/gpt-oss-120b`, with tool-calling
+- **Brain:** [Gemini](https://aistudio.google.com) free API tier, `gemini-2.5-flash`, with tool-calling
 - **Text-to-speech:** [`edge-tts`](https://github.com/rany2/edge-tts) (free, no key)
 
 ## Setup (Windows)
@@ -20,14 +20,14 @@ APIs, no subscriptions, no phone integration.
    pip install -r requirements.txt
    ```
 
-3. **Get a free Groq API key:** sign up at https://console.groq.com/keys
+3. **Get a free Gemini API key:** sign in at https://aistudio.google.com/apikey
    (no credit card required for the free tier).
 
 4. **Add your key:**
    ```
    copy .env.example .env
    ```
-   Then edit `.env` and set `GROQ_API_KEY=your-key-here`.
+   Then edit `.env` and set `GEMINI_API_KEY=your-key-here`.
 
 5. **Grant microphone access** to Python when Windows prompts for it on first run.
 
@@ -220,9 +220,9 @@ research into what actually reads as authentic vs. "trying too hard."
 
 ## Notes
 
-- All processing after the wake word triggers goes to Groq's cloud API
+- All processing after the wake word triggers goes to Gemini's cloud API
   (for the LLM) — wake-word detection and STT run fully locally, so no
   audio leaves your machine until you've actually said "hey jarvis" and
   started talking.
 - If wake-word detection is too sensitive or not sensitive enough, tweak
-  the `threshold` passed to `WakeWordListener` in `main.py`.
+  `JARVIS_WAKE_THRESHOLD`/`JARVIS_WAKE_GAIN` (see audio.py).

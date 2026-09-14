@@ -1,21 +1,31 @@
-"""Groq-backed brain for Jarvis: a small tool-calling chat loop."""
+"""Gemini-backed brain for Jarvis: a small tool-calling chat loop.
+
+Uses the `openai` SDK pointed at Google's OpenAI-compatible endpoint rather
+than Google's native SDK, so the tool-calling plumbing below is the same
+shape either provider would need. Gemini's free tier (250K TPM, shared
+across models) was picked over Groq's (8K TPM for gpt-oss-120b) because
+Jarvis resends its full ~1.9K-token tool schema set on every single call --
+Groq's tier could only sustain 2-4 such calls per minute; Gemini's isn't
+close to that bottleneck at normal conversational pace.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 
-import groq
-from groq import Groq
+import openai
+from openai import OpenAI
 
 from tools import call_tool, get_tool_schemas
 
-MODEL = os.environ.get("JARVIS_MODEL", "openai/gpt-oss-120b")
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.6-flash")
 
-# How many user turns of conversation history to keep. Groq's free tier is
-# tight on tokens (8K TPM / 200K TPD for gpt-oss-120b) and every call resends
-# the full history, so letting it grow unbounded across a conversation burns
-# through that budget fast -- see llm.py's Jarvis._trim_history.
+# How many user turns of conversation history to keep. Every call resends
+# the full history (on top of the ~1.9K-token tool schema set), so letting
+# it grow unbounded across a conversation burns through the per-minute token
+# budget faster than it needs to -- see llm.py's Jarvis._trim_history.
 MAX_HISTORY_TURNS = 6
 
 SYSTEM_PROMPT = (
@@ -43,13 +53,13 @@ SYSTEM_PROMPT = (
 
 class Jarvis:
     def __init__(self):
-        api_key = os.environ.get("GROQ_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError(
-                "GROQ_API_KEY is not set. Copy .env.example to .env and add "
-                "your free key from console.groq.com/keys."
+                "GEMINI_API_KEY is not set. Copy .env.example to .env and add "
+                "your free key from aistudio.google.com/apikey."
             )
-        self.client = Groq(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
         self.history: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         # Files (e.g. a screenshot from describe_screen) produced by tool calls
         # during the most recent ask(). Front-ends that can show files (like
@@ -101,7 +111,7 @@ class Jarvis:
                     )
 
             return "I got stuck juggling tools on that one — try rephrasing?"
-        except groq.APIError as exc:
+        except openai.APIError as exc:
             # Roll back this whole attempt -- don't leave a half-finished turn
             # (a user message with no real reply) sitting in history, since
             # that would silently waste tokens re-sending it on the next ask().
@@ -110,25 +120,24 @@ class Jarvis:
             return _friendly_api_error(exc)
 
 
-def _friendly_api_error(exc: groq.APIError) -> str:
-    if isinstance(exc, groq.RateLimitError):
+def _friendly_api_error(exc: openai.APIError) -> str:
+    if isinstance(exc, openai.RateLimitError):
         wait = _rate_limit_wait_seconds(exc)
         if wait is not None:
-            return f"Hit Groq's free-tier limit — resets in about {_format_wait(wait)}, try again then."
+            return f"Hit Gemini's free-tier limit — resets in about {_format_wait(wait)}, try again then."
         return (
-            "Hit Groq's free-tier rate limit — give it a few minutes and "
+            "Hit Gemini's free-tier rate limit — give it a few minutes and "
             "ask again."
         )
-    if isinstance(exc, groq.APIConnectionError):
-        return "Couldn't reach Groq's API — check your connection and try again."
+    if isinstance(exc, openai.APIConnectionError):
+        return "Couldn't reach Gemini's API — check your connection and try again."
     return "The brain's API hiccuped on that one — try again in a bit."
 
 
-def _rate_limit_wait_seconds(exc: groq.RateLimitError) -> float | None:
-    """Groq's 429 response carries a Retry-After header with the exact
-    number of seconds until enough quota frees up -- use that instead of
-    guessing "a few minutes", which is often wildly off (the free tier's
-    daily token cap can take much longer, or a per-minute cap far less)."""
+def _rate_limit_wait_seconds(exc: openai.RateLimitError) -> float | None:
+    """If the 429 response carries a Retry-After header with the exact
+    number of seconds until enough quota frees up, use that instead of
+    guessing "a few minutes" -- which can be wildly off in either direction."""
     try:
         return float(exc.response.headers.get("retry-after"))
     except (AttributeError, TypeError, ValueError):
