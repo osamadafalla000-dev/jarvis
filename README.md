@@ -68,6 +68,14 @@ script hidden via `wscript.exe`, logging output to `jarvis_log.txt` /
 your Startup folder (`shell:startup` — paste that into Windows Explorer's
 address bar to open it), which Windows runs automatically at every logon.
 
+Both scripts also run `git pull` (logged to `update_log.txt`) before
+starting Python, so every restart automatically picks up the latest fixes
+from this repo with no manual step — **only if the project folder is
+itself a git checkout** (i.e. you got it via `git clone`, not by
+downloading/extracting a zip). If it's not a git checkout, the pull just
+fails silently and Jarvis starts on whatever code is already there; run
+`git clone` once to switch it over, or keep pulling by hand as before.
+
 (Task Scheduler would normally be the more robust way to do this — restart
 on crash, etc. — but task creation was blocked by a permission restriction
 on this machine, so the Startup folder is the fallback. It works the same
