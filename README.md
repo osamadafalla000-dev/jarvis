@@ -237,3 +237,9 @@ research into what actually reads as authentic vs. "trying too hard."
   started talking.
 - If wake-word detection is too sensitive or not sensitive enough, tweak
   `JARVIS_WAKE_THRESHOLD`/`JARVIS_WAKE_GAIN` (see audio.py).
+- If the main model (`JARVIS_MODEL`) hits its free-tier rate limit (daily
+  cap or a per-minute burst), Jarvis automatically retries the same request
+  on a fallback model with its own separate quota (`gemini-3.6-flash` by
+  default) instead of just erroring out. Configure more via a
+  comma-separated `JARVIS_FALLBACK_MODELS` in `.env`. Only when every model
+  in the chain is rate-limited does Jarvis actually tell you to wait.

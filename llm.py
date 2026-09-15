@@ -31,6 +31,22 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # context correctly before making it the default.
 MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.5-flash-lite")
 
+# Free-tier request quotas are tracked per model, not per key -- confirmed by
+# the MODEL history above (switching off gemini-3.6-flash was exactly this:
+# a different model name meant a fresh quota bucket). So when the primary
+# model's quota is hit (daily cap or a per-minute burst), retrying the same
+# request against a different model can succeed immediately instead of
+# making the user wait. Defaults to the one other model this codebase has
+# already confirmed works (gemini-3.6-flash) -- its own daily cap is low
+# (20/day), but that's still a completely separate 20/day from MODEL's,
+# so it's a real fallback, not a fresh way to hit the same wall. Override/
+# extend via a comma-separated JARVIS_FALLBACK_MODELS in .env.
+FALLBACK_MODELS = [
+    m.strip()
+    for m in os.environ.get("JARVIS_FALLBACK_MODELS", "gemini-3.6-flash").split(",")
+    if m.strip()
+]
+
 # How many user turns of conversation history to keep. Every call resends
 # the full history (on top of the ~1.9K-token tool schema set), so letting
 # it grow unbounded across a conversation burns through the per-minute token
@@ -120,64 +136,97 @@ class Jarvis:
     def ask(self, user_text: str) -> str:
         self._trim_history()
         history_len_before = len(self.history)
-        self.history.append({"role": "user", "content": user_text})
         self.last_attachments = []
 
-        try:
-            for _ in range(MAX_TOOL_ROUNDS):
-                response = self.client.chat.completions.create(
-                    model=MODEL,
-                    messages=self.history,
-                    tools=get_tool_schemas(),
-                    tool_choice="auto",
+        models = [MODEL, *[m for m in FALLBACK_MODELS if m != MODEL]]
+        last_exc: openai.APIError | None = None
+        for attempt, model in enumerate(models):
+            self.history.append({"role": "user", "content": user_text})
+            try:
+                return self._run_tool_loop(model)
+            except openai.APIError as exc:
+                # Roll back this whole attempt -- don't leave a half-finished
+                # turn (a user message with no real reply) sitting in
+                # history, since that would silently waste tokens re-sending
+                # it on the next ask() (or the next model tried below).
+                del self.history[history_len_before:]
+                for old_path in self.last_attachments:
+                    Path(old_path).unlink(missing_ok=True)
+                self.last_attachments = []
+                # Print the raw error so it lands in jarvis_log.txt -- the
+                # friendly message below deliberately hides Gemini's actual
+                # wording, but that wording (which quota, per-minute vs
+                # per-day) is exactly what you need to diagnose a stuck
+                # "limit hit" case.
+                print(f"[Jarvis] Gemini API error on model {model!r}: {exc}", file=sys.stderr)
+                last_exc = exc
+                is_last_model = attempt == len(models) - 1
+                if isinstance(exc, openai.RateLimitError) and not is_last_model:
+                    # A rate limit (daily or per-minute) is exactly the case
+                    # a different model's separate quota bucket can dodge --
+                    # keep going instead of surfacing an error the user would
+                    # otherwise have to wait out.
+                    continue
+                return _friendly_api_error(exc, exhausted_models=models if is_last_model else None)
+
+        # Unreachable in practice (the loop above always returns or raises),
+        # but keeps the type checker honest about ask()'s return type.
+        assert last_exc is not None
+        return _friendly_api_error(last_exc)
+
+    def _run_tool_loop(self, model: str) -> str:
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=self.history,
+                tools=get_tool_schemas(),
+                tool_choice="auto",
+            )
+            message = response.choices[0].message
+            self.history.append(message.model_dump(exclude_none=True))
+
+            if not message.tool_calls:
+                return message.content or ""
+
+            for call in message.tool_calls:
+                args = json.loads(call.function.arguments or "{}")
+                result = call_tool(call.function.name, args)
+                if isinstance(result, dict) and "_attachment_path" in result:
+                    attachment_path = result.pop("_attachment_path")
+                    # Keep only the most recent screenshot per ask() --
+                    # earlier ones already served their purpose (feeding
+                    # that tool's own `after` verification back into the
+                    # conversation); sending every intermediate one as a
+                    # separate Telegram photo for one multi-step task
+                    # (e.g. click then type) was confusing, not helpful.
+                    for old_path in self.last_attachments:
+                        Path(old_path).unlink(missing_ok=True)
+                    self.last_attachments = [attachment_path]
+                self.history.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result),
+                    }
                 )
-                message = response.choices[0].message
-                self.history.append(message.model_dump(exclude_none=True))
 
-                if not message.tool_calls:
-                    return message.content or ""
-
-                for call in message.tool_calls:
-                    args = json.loads(call.function.arguments or "{}")
-                    result = call_tool(call.function.name, args)
-                    if isinstance(result, dict) and "_attachment_path" in result:
-                        attachment_path = result.pop("_attachment_path")
-                        # Keep only the most recent screenshot per ask() --
-                        # earlier ones already served their purpose (feeding
-                        # that tool's own `after` verification back into the
-                        # conversation); sending every intermediate one as a
-                        # separate Telegram photo for one multi-step task
-                        # (e.g. click then type) was confusing, not helpful.
-                        for old_path in self.last_attachments:
-                            Path(old_path).unlink(missing_ok=True)
-                        self.last_attachments = [attachment_path]
-                    self.history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.id,
-                            "content": json.dumps(result),
-                        }
-                    )
-
-            return "I got stuck juggling tools on that one — try rephrasing?"
-        except openai.APIError as exc:
-            # Roll back this whole attempt -- don't leave a half-finished turn
-            # (a user message with no real reply) sitting in history, since
-            # that would silently waste tokens re-sending it on the next ask().
-            del self.history[history_len_before:]
-            for old_path in self.last_attachments:
-                Path(old_path).unlink(missing_ok=True)
-            self.last_attachments = []
-            # Print the raw error so it lands in jarvis_log.txt -- the
-            # friendly message below deliberately hides Gemini's actual
-            # wording, but that wording (which quota, per-minute vs per-day)
-            # is exactly what you need to diagnose a stuck "limit hit" case.
-            print(f"[Jarvis] Gemini API error: {exc}", file=sys.stderr)
-            return _friendly_api_error(exc)
+        return "I got stuck juggling tools on that one — try rephrasing?"
 
 
-def _friendly_api_error(exc: openai.APIError) -> str:
+def _friendly_api_error(exc: openai.APIError, exhausted_models: list[str] | None = None) -> str:
     if isinstance(exc, openai.RateLimitError):
+        if exhausted_models and len(exhausted_models) > 1:
+            # Every model in the fallback chain hit its own rate limit for
+            # this request -- worth saying so explicitly, since otherwise
+            # this reads exactly like the single-model case even though
+            # Jarvis already tried to route around it.
+            names = ", ".join(exhausted_models)
+            return (
+                f"Hit Gemini's free-tier limit on every model I've got "
+                f"configured ({names}) — add another to JARVIS_FALLBACK_MODELS "
+                f"in .env, check usage at aistudio.google.com/apikey, or wait "
+                f"a bit and try again."
+            )
         quota = _quota_info(exc)
         if quota.is_daily:
             # A per-day quota doesn't refill by waiting a few minutes -- it
