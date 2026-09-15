@@ -299,25 +299,35 @@ def close_all_applications() -> dict:
     {
         "name": "open_url",
         "description": (
-            "Open a URL in a new tab of Jarvis's managed Google Chrome window "
-            "(not the system's default browser). Tabs stay open across "
-            "requests — use list_open_tabs / close_tab to manage them."
+            "Open a URL in Jarvis's managed Google Chrome window (not the "
+            "system's default browser). If you already opened/navigated a "
+            "tab earlier in this SAME task, this reuses that tab by default "
+            "(e.g. 'open chrome and go to gmail' is naturally one open_url "
+            "call, and even if you call it more than once for the same "
+            "task, it won't pile up extra tabs) -- pass new_tab=true only "
+            "when you actually want a second, separate tab (e.g. comparing "
+            "two sites side by side). Tabs stay open across requests -- use "
+            "list_open_tabs / close_tab to manage them."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "The URL to open."}
+                "url": {"type": "string", "description": "The URL to open."},
+                "new_tab": {
+                    "type": ["boolean", "null"],
+                    "description": "Force a brand-new tab instead of reusing this task's current one (default false).",
+                },
             },
             "required": ["url"],
         },
     }
 )
-def open_url(url: str) -> dict:
+def open_url(url: str, new_tab: bool = False) -> dict:
     import browser_session
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    page = browser_session.open_tab(url)
+    page = browser_session.open_tab(url, reuse=not new_tab)
     return {"status": "opened", "url": url, "page_title": page.title()}
 
 

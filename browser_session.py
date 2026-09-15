@@ -31,6 +31,15 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 _playwright = None
 _browser: Browser | None = None
 _context: BrowserContext | None = None
+# The tab Jarvis itself opened most recently *within the current user turn*
+# (see start_new_turn) -- reused by open_tab() instead of always spawning a
+# new one. Without this, "open a chrome tab, open gmail" as one described
+# task -- however the model chunks it into open_url call(s) -- could open
+# two separate tabs (confirmed live: exactly this happened). Deliberately
+# reset every turn rather than persisted indefinitely, so an unrelated
+# request 10 minutes later still gets its own fresh tab instead of
+# hijacking/navigating away from a tab the user might still be using.
+_turn_tab: Page | None = None
 
 CDP_PORT = int(os.environ.get("JARVIS_CHROME_DEBUG_PORT", "9222"))
 CDP_URL = f"http://localhost:{CDP_PORT}"
@@ -93,10 +102,22 @@ def _with_retry(action: Callable[[], T]) -> T:
         return action()
 
 
-def open_tab(url: str) -> Page:
+def start_new_turn() -> None:
+    """Call once at the start of each user message/ask() -- forgets the
+    reusable tab so tab-reuse never bleeds across unrelated requests."""
+    global _turn_tab
+    _turn_tab = None
+
+
+def open_tab(url: str, reuse: bool = True) -> Page:
     def _do() -> Page:
+        global _turn_tab
+        if reuse and _turn_tab is not None and not _turn_tab.is_closed():
+            _turn_tab.goto(url, wait_until="domcontentloaded")
+            return _turn_tab
         page = get_context().new_page()
         page.goto(url, wait_until="domcontentloaded")
+        _turn_tab = page
         return page
 
     return _with_retry(_do)

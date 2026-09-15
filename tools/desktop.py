@@ -1,13 +1,15 @@
 """Desktop-level mouse/keyboard automation -- clicks and types into
 whatever's on screen, in ANY window (any browser, any app), not just
 Jarvis's own Playwright-controlled Chrome. find_text_on_screen (OCR) is the
-reliable way to find where something is; describe_screen's local vision
-model is weak at reading exact text/positions. Then click there, then type.
+reliable way to find where something is; find_element_on_screen (Gemini
+vision) is the fallback for visual-only targets with no distinctive text of
+their own (unread/bold, a checked box, an icon). Then click there, then type.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -272,6 +274,94 @@ def find_text_on_screen(text: str) -> dict:
 
 @tool(
     {
+        "name": "find_element_on_screen",
+        "description": (
+            "Locate something on screen by visual description instead of "
+            "literal text -- for when find_text_on_screen can't work because "
+            "there's no distinctive text to search for: a bold/unread item "
+            "in a list, a checked checkbox, a toggle that's 'on', an icon, a "
+            "color, or 'the first/top result in a list'. Confirmed live: "
+            "'click any unread email' has no literal text to search for "
+            "('unread' is a style, not a word on screen) -- this is what "
+            "that needs. Uses Gemini's vision to point at it and returns "
+            "approximate click-ready coordinates -- meaningfully less "
+            "precise than find_text_on_screen's OCR-based coordinates, so "
+            "prefer find_text_on_screen whenever the target actually has "
+            "readable text, and always treat click_at's `after` result as "
+            "the real check of whether this landed correctly, retrying with "
+            "a more specific description if it didn't."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What to find, e.g. 'the first unread email in the inbox list' or 'the red record button'.",
+                }
+            },
+            "required": ["description"],
+        },
+    }
+)
+def find_element_on_screen(description: str) -> dict:
+    img = _screenshot_img()
+    width, height = img.size
+
+    try:
+        from llm import GEMINI_BASE_URL, MODEL  # lazy: avoid llm.py's circular import at load time
+        import base64
+        import io
+
+        from openai import OpenAI
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        prompt = (
+            f"This screenshot is exactly {width}x{height} pixels, origin "
+            f"(0,0) at the top-left. Find: {description!r}. Reply with ONLY "
+            "the pixel coordinates of its center as 'x,y' (e.g. '842,613'), "
+            "nothing else -- no words, no punctuation besides the comma. If "
+            "you genuinely can't find it anywhere on screen, reply with "
+            "exactly: not_found"
+        )
+        client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL)
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                    ],
+                }
+            ],
+        )
+        answer = (response.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001 - surface the failure plainly
+        return {"status": "error", "message": f"vision lookup failed: {exc}"}
+
+    if answer.lower().startswith("not_found"):
+        return {"status": "not_found", "description": description}
+
+    match = re.search(r"(-?\d+)\D+(-?\d+)", answer)
+    if not match:
+        return {"status": "error", "message": f"couldn't parse coordinates from: {answer!r}"}
+
+    x, y = int(match.group(1)), int(match.group(2))
+    if not (0 <= x <= width and 0 <= y <= height):
+        return {
+            "status": "error",
+            "message": f"got out-of-bounds coordinates ({x}, {y}) for a {width}x{height} screen",
+        }
+
+    return {"status": "found", "x": x, "y": y, "description": description}
+
+
+@tool(
+    {
         "name": "scroll",
         "description": (
             "Scroll up or down on whatever's currently visible -- any "
@@ -325,11 +415,12 @@ def scroll(direction: str, amount: int = 5, x: int | None = None, y: int | None 
             "works on anything currently visible: any browser window, any "
             "desktop app, not just Jarvis's own managed Chrome window. Get "
             "the coordinates from find_text_on_screen if clicking something "
-            "with a visible label/word; describe_screen only for non-text "
-            "targets (an icon, an image) since its vision model is weak at "
-            "exact text/position. For links/buttons/fields inside Jarvis's "
-            "own browser tabs specifically, browser_fill_and_submit is more "
-            "reliable since it targets by label instead of guessing pixels. "
+            "with a visible label/word; find_element_on_screen for a visual-"
+            "only target (unread/bold, a checked box, an icon, a color, "
+            "'the first one in the list') with no distinctive text of its "
+            "own. For links/buttons/fields inside Jarvis's own browser tabs "
+            "specifically, browser_fill_and_submit is more reliable since it "
+            "targets by label instead of guessing pixels. "
             "Returns `after` -- what's actually visible right after the "
             "click -- trust that over assuming the click landed correctly; "
             "a click can miss (stale coordinates, a still-animating menu, "

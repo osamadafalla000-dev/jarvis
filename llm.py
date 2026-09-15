@@ -11,6 +11,7 @@ close to that bottleneck at normal conversational pace.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -117,12 +118,16 @@ SYSTEM_PROMPT = (
     "'click the blue Compose button' or 'go to Settings and toggle X' is a "
     "failure response, not a helpful one, since if they could do that "
     "they wouldn't need you. You have click_at, type_text, "
-    "find_text_on_screen, describe_screen, and the browser tools -- that's "
-    "you doing it, not you narrating it. If find_text_on_screen doesn't "
-    "find something on the first try, that's not the end: describe_screen "
-    "to see what's actually on screen, scroll if it might be off-screen, "
-    "try alternate wording for the same element (the button might say "
-    "'Send' not 'Submit'), before concluding it's not there. Only after "
+    "find_text_on_screen, find_element_on_screen, describe_screen, and the "
+    "browser tools -- that's you doing it, not you narrating it. "
+    "find_text_on_screen only matches literal on-screen text -- it can't "
+    "find something defined by a visual state instead of words (an unread/"
+    "bold item, a checked box, an icon, a color); use find_element_on_screen "
+    "for those. If neither finds something on the first try, that's not the "
+    "end: describe_screen to see what's actually on screen, scroll if it "
+    "might be off-screen, try alternate wording for the same element (the "
+    "button might say 'Send' not 'Submit'), before concluding it's not "
+    "there. Only after "
     "real attempts like that fail should you say you're stuck. When you do, "
     "the user reached you remotely (voice, or texting from their phone via "
     "Telegram) specifically because they're not at the machine -- 'do it "
@@ -146,6 +151,22 @@ SYSTEM_PROMPT = (
     "front or the moment it's discovered, then carry on through the rest "
     "without further check-ins."
 )
+
+
+def _log(msg: str) -> None:
+    """Timestamped print to stderr, which both run_*.vbs scripts redirect
+    into their log files. Before this, the log only ever captured network
+    hiccups and "Message from chat id" -- what a tool call actually did (or
+    that it ran at all) was never recorded anywhere, so a failure like "it
+    opened two tabs and never found the email" couldn't be diagnosed after
+    the fact, only guessed at from code reading. This is what makes that
+    diagnosable going forward."""
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
+
+
+def _short(obj, limit: int = 300) -> str:
+    s = obj if isinstance(obj, str) else json.dumps(obj, default=str)
+    return s if len(s) <= limit else s[: limit - 15] + "...(truncated)"
 
 
 class Jarvis:
@@ -178,6 +199,17 @@ class Jarvis:
         self._trim_history()
         history_len_before = len(self.history)
         self.last_attachments = []
+        _log(f"ask: {_short(user_text)}")
+
+        try:
+            # Forgets the tab-reuse pointer from any previous turn, so an
+            # open_url call in THIS task never silently navigates away from
+            # a tab a completely different, earlier request left open.
+            import browser_session
+
+            browser_session.start_new_turn()
+        except Exception:  # noqa: BLE001 - browser tools are optional; don't block a non-browser task
+            pass
 
         models = [MODEL, *[m for m in FALLBACK_MODELS if m != MODEL]]
         last_exc: openai.APIError | None = None
@@ -227,11 +259,13 @@ class Jarvis:
             self.history.append(message.model_dump(exclude_none=True))
 
             if not message.tool_calls:
+                _log(f"reply: {_short(message.content or '')}")
                 return message.content or ""
 
             for call in message.tool_calls:
                 args = json.loads(call.function.arguments or "{}")
                 result = call_tool(call.function.name, args)
+                _log(f"tool: {call.function.name}({_short(args, 150)}) -> {_short(result)}")
                 if isinstance(result, dict) and "_attachment_path" in result:
                     attachment_path = result.pop("_attachment_path")
                     # Keep only the most recent screenshot per ask() --
@@ -251,6 +285,7 @@ class Jarvis:
                     }
                 )
 
+        _log(f"hit MAX_TOOL_ROUNDS ({MAX_TOOL_ROUNDS}) without a final answer")
         return "I got stuck juggling tools on that one — try rephrasing?"
 
 

@@ -76,7 +76,7 @@ def browser_fill_and_submit(
         if url:
             page.goto(url, wait_until="domcontentloaded")
     elif url:
-        page = browser_session.open_tab(url)
+        page = browser_session.open_tab(url)  # reuse=True default: won't pile up tabs within one task
     else:
         return {"status": "error", "message": "need either a url or a tab_index/tab_hint"}
 
