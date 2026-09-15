@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 from pathlib import Path
 
 import openai
@@ -166,14 +168,32 @@ class Jarvis:
             for old_path in self.last_attachments:
                 Path(old_path).unlink(missing_ok=True)
             self.last_attachments = []
+            # Print the raw error so it lands in jarvis_log.txt -- the
+            # friendly message below deliberately hides Gemini's actual
+            # wording, but that wording (which quota, per-minute vs per-day)
+            # is exactly what you need to diagnose a stuck "limit hit" case.
+            print(f"[Jarvis] Gemini API error: {exc}", file=sys.stderr)
             return _friendly_api_error(exc)
 
 
 def _friendly_api_error(exc: openai.APIError) -> str:
     if isinstance(exc, openai.RateLimitError):
-        wait = _rate_limit_wait_seconds(exc)
-        if wait is not None:
-            return f"Hit Gemini's free-tier limit — resets in about {_format_wait(wait)}, try again then."
+        quota = _quota_info(exc)
+        if quota.is_daily:
+            # A per-day quota doesn't refill by waiting a few minutes -- it
+            # only resets on Google's daily cycle (midnight Pacific time).
+            # Telling the user to "try again in a bit" here is actively
+            # misleading: they can retry for hours and it'll keep failing
+            # until the reset actually happens.
+            return (
+                "Hit Gemini's free-tier DAILY request cap, not a short-term "
+                "rate limit -- retrying every few minutes won't help, it "
+                "only resets once every 24h (around midnight Pacific time). "
+                "Check usage at aistudio.google.com/apikey, or wait for the "
+                "daily reset."
+            )
+        if quota.wait_seconds is not None:
+            return f"Hit Gemini's free-tier limit — resets in about {_format_wait(quota.wait_seconds)}, try again then."
         return (
             "Hit Gemini's free-tier rate limit — give it a few minutes and "
             "ask again."
@@ -183,14 +203,63 @@ def _friendly_api_error(exc: openai.APIError) -> str:
     return "The brain's API hiccuped on that one — try again in a bit."
 
 
-def _rate_limit_wait_seconds(exc: openai.RateLimitError) -> float | None:
-    """If the 429 response carries a Retry-After header with the exact
-    number of seconds until enough quota frees up, use that instead of
-    guessing "a few minutes" -- which can be wildly off in either direction."""
+class _QuotaInfo:
+    def __init__(self, wait_seconds: float | None, is_daily: bool):
+        self.wait_seconds = wait_seconds
+        self.is_daily = is_daily
+
+
+def _quota_info(exc: openai.RateLimitError) -> _QuotaInfo:
+    """Figure out what kind of 429 this actually is.
+
+    Two independent things can tell us: an HTTP Retry-After header (rare --
+    Gemini's OpenAI-compat endpoint generally doesn't send one) and the JSON
+    error body, which does carry Google's real quota details (a
+    google.rpc.RetryInfo delay, and a google.rpc.QuotaFailure naming which
+    quota was hit, e.g. a "...PerDay..." quotaId/quotaMetric for the daily
+    cap vs "...PerMinute..." for a short-term one). The old code only
+    checked the header, so it silently always fell through to the vague
+    "a few minutes" message -- including for daily-cap hits, which is the
+    misleading case that makes Jarvis look stuck for hours.
+    """
+    wait_seconds = None
     try:
-        return float(exc.response.headers.get("retry-after"))
+        wait_seconds = float(exc.response.headers.get("retry-after"))
     except (AttributeError, TypeError, ValueError):
-        return None
+        pass
+
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error") if isinstance(body.get("error"), dict) else body
+    message = str(error.get("message") or "") if isinstance(error, dict) else ""
+    details = error.get("details") or [] if isinstance(error, dict) else []
+    if not isinstance(details, list):
+        details = []
+
+    is_daily = "per day" in message.lower() or "daily" in message.lower()
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        detail_type = str(detail.get("@type", ""))
+        if wait_seconds is None and detail_type.endswith("RetryInfo"):
+            match = re.match(r"([\d.]+)s?$", str(detail.get("retryDelay", "")))
+            if match:
+                wait_seconds = float(match.group(1))
+        if detail_type.endswith("QuotaFailure"):
+            for violation in detail.get("violations", []) or []:
+                if not isinstance(violation, dict):
+                    continue
+                quota_name = " ".join(
+                    str(violation.get(key, ""))
+                    for key in ("quotaId", "quotaMetric", "quotaDimensions")
+                ).lower()
+                if "day" in quota_name:
+                    is_daily = True
+
+    # A daily-cap 429 will often still carry a short RetryInfo delay -- that
+    # delay is a generic per-request backoff hint, not an actual "quota
+    # refills in N seconds" promise, so once we know it's the daily quota,
+    # trust that over any short wait_seconds we parsed.
+    return _QuotaInfo(wait_seconds=None if is_daily else wait_seconds, is_daily=is_daily)
 
 
 def _format_wait(seconds: float) -> str:
