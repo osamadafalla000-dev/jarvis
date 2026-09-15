@@ -42,9 +42,16 @@ _sessions: dict[int, Jarvis] = {}
 # a message even arrived, the natural reaction is "did that go through?" ->
 # resend -> resend again. Those pile up and then run back-to-back with no
 # confirmation in between, which *looks* like chaos even though it's
-# strictly sequential. Tracking busy-per-chat lets the immediate ack say
-# what's actually happening instead of just going quiet.
+# strictly sequential. Tracking busy-per-chat lets a queued message get an
+# immediate "still on your last one" instead of just going quiet.
 _busy: dict[int, bool] = {}
+
+# How long to give jarvis.ask() before assuming this is a real multi-step
+# task rather than plain conversation, and only then sending an "on it"
+# ack. Ordinary chat replies (no tool calls) typically land in 1-3s; without
+# this, every message -- including "lol nice" -- got announced as a task
+# before Jarvis actually answered it.
+_TASK_ACK_DELAY_SECONDS = 3.0
 
 
 def _get_jarvis(chat_id: int) -> Jarvis:
@@ -83,13 +90,11 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
         await message.reply_text("(didn't catch any words in that)")
         return
 
-    # Immediate ack so a slow task never reads as "didn't go through" --
-    # that's what was causing repeat sends piling up. Distinguishes a fresh
-    # request from one that's now queued behind one still running.
+    # A queued message (one that arrives while the previous one for this
+    # chat is still running) gets an immediate ack so it doesn't read as
+    # "didn't go through" -- that's what was causing repeat sends piling up.
     if _busy.get(chat_id):
         await message.reply_text("still on your last one -- this'll go right after")
-    else:
-        await message.reply_text("on it, one sec")
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
     _busy[chat_id] = True
@@ -100,7 +105,15 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
         # already has an asyncio event loop -- this handler is exactly that
         # thread. Run it in a plain worker thread (no event loop of its own)
         # instead.
-        reply = await asyncio.to_thread(jarvis.ask, text)
+        ask_task = asyncio.create_task(asyncio.to_thread(jarvis.ask, text))
+        try:
+            reply = await asyncio.wait_for(asyncio.shield(ask_task), _TASK_ACK_DELAY_SECONDS)
+        except asyncio.TimeoutError:
+            # Still going after a few seconds -- this is a real multi-step
+            # task (tool calls), not plain conversation, so it's worth
+            # saying something before going quiet for another 20-40s.
+            await message.reply_text("on it, one sec")
+            reply = await ask_task
     finally:
         _busy[chat_id] = False
     await message.reply_text(reply)
