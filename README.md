@@ -160,10 +160,21 @@ was the tradeoff made instead, deliberately, after that came up short.)
 
 **Setup:** close every Chrome window (check the taskbar/system tray for
 lingering background processes too), then launch Chrome via
-`launch_chrome_debuggable.vbs` instead of your normal shortcut whenever you
-want Jarvis to be able to control it. Everything else about Chrome — your
-profile, extensions, open tabs — works exactly as normal; it just also
-listens on `localhost:9222` for Jarvis to connect to.
+`launch_chrome_debuggable.vbs` instead of your normal shortcut once, to get
+started. Everything else about Chrome — your profile, extensions, open tabs
+— works exactly as normal; it just also listens on `localhost:9222` for
+Jarvis to connect to.
+
+**You shouldn't need to do that by hand going forward.** Two things handle
+it automatically: `run_chrome_debuggable.vbs`, placed in the Startup folder
+alongside Jarvis's own scripts, launches a debuggable Chrome at every login
+(but only if Chrome isn't already running, so it won't fight one that
+started another way or double-launch). And if Chrome is ever fully closed
+when a browser tool actually gets used, `browser_session.py` launches it
+itself, debuggable, with nothing for you to do. The one case neither of
+those covers: Chrome already open, just without the flag (it only takes
+effect at launch, so it can't be turned on retroactively) — close every
+Chrome window once and it comes back debuggable next time, same as always.
 
 - `open_url` and `browser_fill_and_submit` open tabs in this Chrome window
   instead of the system default browser.
@@ -187,10 +198,12 @@ working against Wikipedia's search box, including the full open -> fill ->
 wait -> screenshot -> close-tab flow, and acting on an already-open tab
 rather than opening a new one).
 
-**If Chrome isn't running with the debug port enabled**, browser tools fail
-with a clear message telling you to relaunch it via
-`launch_chrome_debuggable.vbs` — Jarvis never tries to force-close or
-restart your browser itself, since it doesn't own that window's lifecycle.
+**If Chrome isn't running at all**, Jarvis launches it itself, debuggable,
+the moment a browser tool needs it. **If Chrome is running without the
+debug port enabled**, browser tools fail with a clear message telling you
+to close every Chrome window and try again — Jarvis never force-closes your
+browser itself, since that could lose tabs/work it doesn't know about; it
+only ever launches a fresh Chrome when there's nothing already open to lose.
 
 ## What's built so far
 

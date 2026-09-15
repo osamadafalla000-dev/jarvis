@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import atexit
 import os
+import subprocess
+import time
+import urllib.request
 from typing import Callable, TypeVar
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
@@ -31,6 +34,10 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 _playwright = None
 _browser: Browser | None = None
 _context: BrowserContext | None = None
+
+CHROME_EXE = os.environ.get(
+    "JARVIS_CHROME_EXE", r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+)
 # The tab Jarvis itself opened most recently *within the current user turn*
 # (see start_new_turn) -- reused by open_tab() instead of always spawning a
 # new one. Without this, "open a chrome tab, open gmail" as one described
@@ -45,6 +52,45 @@ CDP_PORT = int(os.environ.get("JARVIS_CHROME_DEBUG_PORT", "9222"))
 CDP_URL = f"http://localhost:{CDP_PORT}"
 
 T = TypeVar("T")
+
+
+def _chrome_running() -> bool:
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return "chrome.exe" in result.stdout.lower()
+    except Exception:  # noqa: BLE001 - can't tell either way; assume running so we don't launch a duplicate
+        return True
+
+
+def _try_auto_launch_chrome() -> bool:
+    """If Chrome isn't running at all, launch it ourselves with the debug
+    port enabled instead of just telling the user to do it by hand -- the
+    user explicitly asked not to have to do this manually every time.
+    Nothing to lose here: if Chrome has zero windows open there's no
+    session/tabs an auto-launch could disrupt. If Chrome IS running, just
+    without the flag, this deliberately does NOT touch it -- force-closing
+    windows the user has open without asking could lose real work, so that
+    case still needs the user to close Chrome themselves once."""
+    if not os.path.exists(CHROME_EXE) or _chrome_running():
+        return False
+    try:
+        subprocess.Popen([CHROME_EXE, f"--remote-debugging-port={CDP_PORT}"])
+    except Exception:  # noqa: BLE001
+        return False
+
+    for _ in range(20):  # up to ~10s for Chrome to actually start listening
+        time.sleep(0.5)
+        try:
+            urllib.request.urlopen(f"{CDP_URL}/json/version", timeout=1)
+            return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
 
 
 def _reset() -> None:
@@ -80,12 +126,15 @@ def get_context(force_new: bool = False) -> BrowserContext:
     except Exception as exc:
         _playwright.stop()
         _playwright = None
+        if _try_auto_launch_chrome():
+            return get_context(force_new=False)
         raise RuntimeError(
-            "Can't reach Chrome's remote-debugging port -- Chrome needs to be "
-            "running with it enabled, which only takes effect at launch. Close "
-            "every Chrome window (check the taskbar/system tray for lingering "
-            "background processes too), then reopen it via "
-            "launch_chrome_debuggable.vbs, and try again."
+            "Can't reach Chrome's remote-debugging port. Chrome is already "
+            "running without it enabled -- that flag only takes effect at "
+            "launch, so it can't be turned on for an already-open window. "
+            "Close every Chrome window (check the taskbar/system tray for "
+            "lingering background processes too) and try again -- Jarvis "
+            "will relaunch it debuggable itself once nothing's open."
         ) from exc
 
     # The browser's own existing context -- the user's actual, already
