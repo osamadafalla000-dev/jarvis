@@ -247,7 +247,10 @@ research into what actually reads as authentic vs. "trying too hard."
   `JARVIS_WAKE_THRESHOLD`/`JARVIS_WAKE_GAIN` (see audio.py).
 - If the main model (`JARVIS_MODEL`) hits its free-tier rate limit (daily
   cap or a per-minute burst), Jarvis automatically retries the same request
-  on a fallback model with its own separate quota (`gemini-3.6-flash` by
-  default) instead of just erroring out. Configure more via a
-  comma-separated `JARVIS_FALLBACK_MODELS` in `.env`. Only when every model
-  in the chain is rate-limited does Jarvis actually tell you to wait.
+  on the next model in a fallback chain, each with its own separate quota
+  (`gemini-3.6-flash` → `gemini-3.8-flash` → `gemini-3.1-flash-lite` by
+  default) instead of just erroring out. Later models can be a bit weaker —
+  a dumber reply beats no reply — but the odds of every quota in the chain
+  being hit on the same day keep shrinking the longer it is. Configure via
+  a comma-separated `JARVIS_FALLBACK_MODELS` in `.env`. Only when every
+  model in the chain is rate-limited does Jarvis actually tell you to wait.

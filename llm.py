@@ -36,14 +36,25 @@ MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.5-flash-lite")
 # a different model name meant a fresh quota bucket). So when the primary
 # model's quota is hit (daily cap or a per-minute burst), retrying the same
 # request against a different model can succeed immediately instead of
-# making the user wait. Defaults to the one other model this codebase has
-# already confirmed works (gemini-3.6-flash) -- its own daily cap is low
-# (20/day), but that's still a completely separate 20/day from MODEL's,
-# so it's a real fallback, not a fresh way to hit the same wall. Override/
+# making the user wait. A whole chain of them, not just one, means the odds
+# of every single quota being hit on the same day keep shrinking as more
+# links get added -- the tradeoff is each successive model can be a weaker
+# one (a dumber reply beats no reply). All three below were live-verified
+# against this API key: they exist, accept tool-calling the same way MODEL
+# does, and are distinct dated model names (not "-latest" aliases, which can
+# silently resolve to a model already earlier in this chain and so share
+# its quota instead of adding a real fresh one). Deliberately excludes
+# gemini-3.7-flash (hit a 503 "high demand" on a live test -- the retry
+# logic below only chains across models on a quota/rate-limit error, not a
+# general server error, so a flaky model here would just dead-end the whole
+# chain instead of falling through) and gemini-2.5-flash/-flash-lite (both
+# confirmed fully retired: 404 "no longer available to new users"). Override/
 # extend via a comma-separated JARVIS_FALLBACK_MODELS in .env.
 FALLBACK_MODELS = [
     m.strip()
-    for m in os.environ.get("JARVIS_FALLBACK_MODELS", "gemini-3.6-flash").split(",")
+    for m in os.environ.get(
+        "JARVIS_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash,gemini-3.1-flash-lite"
+    ).split(",")
     if m.strip()
 ]
 
