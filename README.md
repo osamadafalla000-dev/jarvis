@@ -115,6 +115,120 @@ needed. Your PC just needs to be on and running the script.
    since that's the "talking out loud" front-end — no wake word needed on
    Telegram since messaging it is the "wake up".
 
+### Always-on cloud relay (so it still answers when the laptop's off)
+
+By default `telegram_bot.py` is just a Python process on your laptop — if
+the laptop is off or asleep, there is no process anywhere to receive your
+message, so you get silence, not an error. That's a hosting problem, not
+something a code change on its own can fix: it needs a second machine
+that's actually always on.
+
+Moving `telegram_bot.py` to a free-tier always-on cloud VM (Oracle Cloud's
+"Always Free" tier, or similar) or a Raspberry Pi/spare PC left running
+fixes this for everything **except** screen/browser control, which
+inherently needs the laptop itself:
+
+| Works from the cloud relay | Still needs the laptop on |
+|---|---|
+| Plain conversation | `click_at`, `type_text`, `find_text_on_screen` |
+| Calendar, email (read + draft) | `describe_screen` |
+| Notes, web search | `browser_fill_and_submit`, tab management |
+| Voice notes (transcription) | Spoken replies (`main.py` only, laptop-only anyway) |
+
+`tools/__init__.py` disables each screen-control tool individually if its
+package isn't installed rather than crashing the whole bot, and the system
+prompt is told exactly which ones are missing on a given host -- so on the
+cloud relay, Jarvis will say a request needs your laptop's Jarvis instead
+of either hallucinating a click or telling you to do it yourself (which is
+never right anyway, remote or not).
+
+**Setup:**
+
+1. Spin up the VM (or use your Pi), then get this repo onto it: `git clone`
+   the repo (same URL as this branch), or `git pull` if you already cloned
+   it there.
+2. `python3 -m venv venv && source venv/bin/activate`
+3. `pip install -r requirements-cloud.txt` — a trimmed dependency list that
+   skips everything laptop/display-only (pyautogui, playwright, sounddevice,
+   openwakeword, edge-tts) so install doesn't fail trying to build things a
+   bare server can't (some of those packages don't even build without
+   desktop libraries present).
+4. Copy over `.env` (just `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_ALLOWED_CHAT_ID`) — and `credentials.json`/`token.json` too if
+   you want Calendar/Gmail working from the cloud relay as well (those don't
+   need the laptop either).
+5. Run it so it survives your SSH session ending — a systemd service is the
+   robust option:
+   ```
+   sudo tee /etc/systemd/system/jarvis-telegram.service <<'EOF'
+   [Unit]
+   Description=Jarvis Telegram bot
+   After=network.target
+
+   [Service]
+   WorkingDirectory=/path/to/jarvis
+   ExecStart=/path/to/jarvis/venv/bin/python -u telegram_bot.py
+   Restart=always
+   EnvironmentFile=/path/to/jarvis/.env
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl enable --now jarvis-telegram
+   ```
+   (`tmux`/`screen` + manually restarting after a reboot works too, just
+   less hands-off.)
+
+**Important:** only run *one* `telegram_bot.py` at a time for a given bot
+token. Telegram's long-polling doesn't support two pollers on the same
+token — running it on both the cloud VM and the laptop simultaneously
+causes a `Conflict` error and dropped/duplicate messages. Once it's on the
+cloud relay, stop it on the laptop (the Startup-folder copy can go, or just
+leave `run_telegram_bot.vbs` out of `shell:startup`) — the laptop still
+runs `main.py` for the voice loop, that's unaffected.
+
+### Knowing when the laptop itself is actually offline
+
+The cloud relay above already means Telegram never goes silent — but on
+its own, it only mentions the laptop when a specific request needs
+screen/browser control. If you want Jarvis to be able to answer "is my
+laptop on?" directly (or mention it's been offline a specific amount of
+time, unprompted), set up the heartbeat: the laptop checks in with the
+cloud relay every couple of minutes while it's actually running, and
+`get_laptop_status` reads that to give a real answer instead of a guess.
+
+1. **On the cloud VM**, run `heartbeat_server.py` (pure stdlib, no extra
+   install) as another systemd service, same pattern as `jarvis-telegram`
+   above:
+   ```
+   sudo tee /etc/systemd/system/jarvis-heartbeat.service <<'EOF'
+   [Unit]
+   Description=Jarvis laptop heartbeat receiver
+   After=network.target
+
+   [Service]
+   WorkingDirectory=/path/to/jarvis
+   ExecStart=/path/to/jarvis/venv/bin/python -u heartbeat_server.py
+   Restart=always
+   EnvironmentFile=/path/to/jarvis/.env
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl enable --now jarvis-heartbeat
+   ```
+2. **Open the port** (`8765` by default) in the cloud provider's firewall/
+   security group, and set `JARVIS_HEARTBEAT_TOKEN` (any random string) in
+   the cloud VM's `.env`.
+3. **On the laptop**, add the same `JARVIS_HEARTBEAT_TOKEN` plus
+   `JARVIS_HEARTBEAT_URL=http://your-cloud-vm-ip:8765/heartbeat` to `.env`
+   (see `.env.example`). `main.py`'s normal wake-word loop (`run_loop()`)
+   starts sending the heartbeat automatically — nothing else to run.
+
+If the heartbeat isn't configured at all, `get_laptop_status` just reports
+"unknown" rather than doing anything misleading — everything else in this
+README works exactly the same with or without it.
+
 ## Calendar, email, notes, and web search (Phase 2)
 
 **Notes and web search work immediately, no setup needed.** Calendar and
@@ -234,11 +348,17 @@ only ever launches a fresh Chrome when there's nothing already open to lose.
 - `describe_screen` — screen vision via Gemini (same API/key as the brain)
 - `find_text_on_screen` — OCR (Tesseract) for precise click-ready
   coordinates of any visible text
+- `find_element_on_screen` — Gemini vision for things with no literal text
+  to search for (unread/bold, a checked box, an icon, a color)
 - `click_at`, `type_text` — desktop-wide mouse/keyboard control, any
   window or app, not just Jarvis's own browser tabs
+- `scroll` — scroll any page/panel up or down
 - `browser_fill_and_submit`, `list_open_tabs`, `screenshot_tab`,
   `close_tab`, `close_all_tabs` — connected to the user's real Chrome, full
   control over every open tab, new or existing
+- `get_laptop_status` — reads the laptop's heartbeat (see "Always-on cloud
+  relay" above) to answer "is my laptop on?" for real, or give a specific
+  offline duration instead of a guess
 
 **Personality:** casual, dry-witted, talks like a sharp friend texting
 back rather than a formal assistant — light slang/emoji only when it

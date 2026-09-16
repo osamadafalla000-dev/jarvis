@@ -12,3 +12,4 @@ notes/
 jarvis_log.txt
 telegram_bot_log.txt
 update_log.txt
+laptop_heartbeat.json

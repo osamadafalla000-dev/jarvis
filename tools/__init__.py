@@ -1,6 +1,16 @@
 """Tool registry for the Jarvis LLM tool-calling loop."""
 
+import importlib
+import sys
+
 _TOOLS: dict[str, dict] = {}
+
+# Modules whose import failed (e.g. tools/desktop.py's pyautogui needs a real
+# display, which a headless always-on cloud/server deployment won't have) --
+# populated by the import loop at the bottom of this file. llm.py reads this
+# to tell the model plainly which capabilities aren't available from this
+# particular instance, instead of it guessing or pretending.
+UNAVAILABLE_MODULES: dict[str, str] = {}
 
 
 def tool(schema: dict):
@@ -35,12 +45,31 @@ def call_tool(name: str, arguments: dict):
 
 
 # Import tool modules so their @tool decorators register on package import.
-from . import basic  # noqa: E402,F401
-from . import browser  # noqa: E402,F401
-from . import calendar_tool  # noqa: E402,F401
-from . import desktop  # noqa: E402,F401
-from . import email_tool  # noqa: E402,F401
-from . import notes  # noqa: E402,F401
-from . import tabs  # noqa: E402,F401
-from . import vision  # noqa: E402,F401
-from . import web_search  # noqa: E402,F401
+# Each one is guarded individually: a module whose import needs something
+# this host doesn't have (desktop.py's pyautogui needs a real display,
+# browser.py/tabs.py's playwright is only useful with a real Chrome to
+# connect to) shouldn't take down every other tool with it -- that would
+# mean a headless cloud deployment can't even answer plain chat. A failed
+# module's tools are simply absent from get_tool_schemas(), so the model
+# never sees or tries to call them.
+for _module_name in (
+    "basic",
+    "browser",
+    "calendar_tool",
+    "desktop",
+    "email_tool",
+    "laptop_status",
+    "notes",
+    "tabs",
+    "vision",
+    "web_search",
+):
+    try:
+        importlib.import_module(f".{_module_name}", package=__name__)
+    except Exception as exc:  # noqa: BLE001 - any missing optional dependency
+        UNAVAILABLE_MODULES[_module_name] = str(exc)
+        print(
+            f"[tools] {_module_name}.py unavailable on this host, its tools "
+            f"are disabled: {exc}",
+            file=sys.stderr,
+        )

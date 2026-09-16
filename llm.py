@@ -21,7 +21,21 @@ from pathlib import Path
 import openai
 from openai import OpenAI
 
+import tools
 from tools import call_tool, get_tool_schemas
+
+# Human-readable capability names for tool modules that might not load on a
+# given host (e.g. tools/desktop.py's pyautogui needs a real display, which
+# an always-on cloud/server deployment running only telegram_bot.py won't
+# have). Only listed here if failing genuinely means "not on this machine" --
+# calendar_tool/email_tool failing more likely means missing credentials.json,
+# which the model already reports as a plain tool error, not a capability gap.
+_SCREEN_CONTROL_MODULES = {
+    "desktop": "clicking/typing anywhere on screen, or reading it via OCR",
+    "vision": "describe_screen (looking at what's currently on screen)",
+    "browser": "controlling your actual Chrome (opening tabs, filling forms)",
+    "tabs": "managing your open Chrome tabs",
+}
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # gemini-3.6-flash's free tier turned out to cap at just 20 requests/day
@@ -151,6 +165,35 @@ SYSTEM_PROMPT = (
     "front or the moment it's discovered, then carry on through the rest "
     "without further check-ins."
 )
+
+_missing_screen_control = {
+    name: desc for name, desc in _SCREEN_CONTROL_MODULES.items() if name in tools.UNAVAILABLE_MODULES
+}
+if _missing_screen_control:
+    # This instance is running somewhere without a real display/browser to
+    # control -- e.g. an always-on cloud server standing in for the laptop
+    # while it's off. The model has no other way to know these tools simply
+    # don't exist right now rather than existing-but-failing, so it needs to
+    # be told outright, or it'll either hallucinate trying them or, worse,
+    # fall back into telling the user to do it by hand.
+    SYSTEM_PROMPT += (
+        "\n\nIMPORTANT: this specific instance of you is running somewhere "
+        "without a real screen/browser to control, so you do NOT have "
+        + "; ".join(_missing_screen_control.values())
+        + " -- those tools don't exist in this conversation at all, not "
+        "even to try. If a request needs one of those, say plainly that it "
+        "needs your laptop/desktop instance of Jarvis running for that part "
+        "specifically (not just 'do it yourself' -- that's still wrong for "
+        "the same reason as always: they're texting you because they're "
+        "not at it). Before saying that, call get_laptop_status if it's "
+        "available -- it tells you how long it's actually been since the "
+        "laptop's own Jarvis checked in, so you can say something real "
+        "('it's been offline about 40 minutes') instead of a bare 'needs "
+        "your laptop' every time, whether or not it's actually off right "
+        "now. Everything else -- chat, calendar, email, notes, web "
+        "search -- works completely normally from here."
+    )
+del _missing_screen_control
 
 
 def _log(msg: str) -> None:

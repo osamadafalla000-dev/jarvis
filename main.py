@@ -94,11 +94,15 @@ def run_loop() -> None:
     import threading
 
     import audio
+    import heartbeat_client
     from llm import Jarvis
 
     print("Downloading/verifying wake-word models (first run only)...")
     audio.ensure_wakeword_models()
     audio.warm_up_ack()
+    # No-ops unless JARVIS_HEARTBEAT_URL is set (i.e. a cloud relay is
+    # actually configured to receive it) -- see heartbeat_client.py.
+    heartbeat_client.start_if_configured()
 
     jarvis = Jarvis()
     listener = audio.WakeWordListener()

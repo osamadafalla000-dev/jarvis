@@ -1,0 +1,21 @@
+# For running telegram_bot.py on an always-on server (a free-tier cloud VM,
+# a Raspberry Pi, etc.) instead of the laptop -- see the "Always-on cloud
+# relay" section in README.md. Deliberately excludes everything that needs
+# real hardware the server won't have: openwakeword/sounddevice/edge-tts
+# (mic + wake word + spoken replies -- voice-loop-only, main.py never runs
+# here), pyautogui/pytesseract/pillow (desktop control needs a real screen),
+# and playwright (browser control needs a real, already-running Chrome on
+# the same machine). tools/__init__.py disables each of those tools
+# individually if their package isn't installed, rather than crashing, so
+# this shorter list is an optimization (smaller/faster install, nothing
+# unbuildable on a minimal server), not a requirement for correctness.
+openai>=1.0.0
+python-dotenv>=1.0.0
+python-telegram-bot>=21.0
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+ddgs>=9.0.0
+requests>=2.31.0
+numpy>=1.26.0
+faster-whisper>=1.0.0
