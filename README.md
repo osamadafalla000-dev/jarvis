@@ -115,6 +115,78 @@ needed. Your PC just needs to be on and running the script.
    since that's the "talking out loud" front-end — no wake word needed on
    Telegram since messaging it is the "wake up".
 
+### Always-on cloud relay (so it still answers when the laptop's off)
+
+By default `telegram_bot.py` is just a Python process on your laptop — if
+the laptop is off or asleep, there is no process anywhere to receive your
+message, so you get silence, not an error. That's a hosting problem, not
+something a code change on its own can fix: it needs a second machine
+that's actually always on.
+
+Moving `telegram_bot.py` to a free-tier always-on cloud VM (Oracle Cloud's
+"Always Free" tier, or similar) or a Raspberry Pi/spare PC left running
+fixes this for everything **except** screen/browser control, which
+inherently needs the laptop itself:
+
+| Works from the cloud relay | Still needs the laptop on |
+|---|---|
+| Plain conversation | `click_at`, `type_text`, `find_text_on_screen` |
+| Calendar, email (read + draft) | `describe_screen` |
+| Notes, web search | `browser_fill_and_submit`, tab management |
+| Voice notes (transcription) | Spoken replies (`main.py` only, laptop-only anyway) |
+
+`tools/__init__.py` disables each screen-control tool individually if its
+package isn't installed rather than crashing the whole bot, and the system
+prompt is told exactly which ones are missing on a given host -- so on the
+cloud relay, Jarvis will say a request needs your laptop's Jarvis instead
+of either hallucinating a click or telling you to do it yourself (which is
+never right anyway, remote or not).
+
+**Setup:**
+
+1. Spin up the VM (or use your Pi), then get this repo onto it: `git clone`
+   the repo (same URL as this branch), or `git pull` if you already cloned
+   it there.
+2. `python3 -m venv venv && source venv/bin/activate`
+3. `pip install -r requirements-cloud.txt` — a trimmed dependency list that
+   skips everything laptop/display-only (pyautogui, playwright, sounddevice,
+   openwakeword, edge-tts) so install doesn't fail trying to build things a
+   bare server can't (some of those packages don't even build without
+   desktop libraries present).
+4. Copy over `.env` (just `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_ALLOWED_CHAT_ID`) — and `credentials.json`/`token.json` too if
+   you want Calendar/Gmail working from the cloud relay as well (those don't
+   need the laptop either).
+5. Run it so it survives your SSH session ending — a systemd service is the
+   robust option:
+   ```
+   sudo tee /etc/systemd/system/jarvis-telegram.service <<'EOF'
+   [Unit]
+   Description=Jarvis Telegram bot
+   After=network.target
+
+   [Service]
+   WorkingDirectory=/path/to/jarvis
+   ExecStart=/path/to/jarvis/venv/bin/python -u telegram_bot.py
+   Restart=always
+   EnvironmentFile=/path/to/jarvis/.env
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl enable --now jarvis-telegram
+   ```
+   (`tmux`/`screen` + manually restarting after a reboot works too, just
+   less hands-off.)
+
+**Important:** only run *one* `telegram_bot.py` at a time for a given bot
+token. Telegram's long-polling doesn't support two pollers on the same
+token — running it on both the cloud VM and the laptop simultaneously
+causes a `Conflict` error and dropped/duplicate messages. Once it's on the
+cloud relay, stop it on the laptop (the Startup-folder copy can go, or just
+leave `run_telegram_bot.vbs` out of `shell:startup`) — the laptop still
+runs `main.py` for the voice loop, that's unaffected.
+
 ## Calendar, email, notes, and web search (Phase 2)
 
 **Notes and web search work immediately, no setup needed.** Calendar and
