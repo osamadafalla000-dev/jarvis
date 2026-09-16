@@ -58,6 +58,7 @@ for _module_name in (
     "calendar_tool",
     "desktop",
     "email_tool",
+    "laptop_status",
     "notes",
     "tabs",
     "vision",

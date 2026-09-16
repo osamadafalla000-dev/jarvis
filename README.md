@@ -187,6 +187,48 @@ cloud relay, stop it on the laptop (the Startup-folder copy can go, or just
 leave `run_telegram_bot.vbs` out of `shell:startup`) — the laptop still
 runs `main.py` for the voice loop, that's unaffected.
 
+### Knowing when the laptop itself is actually offline
+
+The cloud relay above already means Telegram never goes silent — but on
+its own, it only mentions the laptop when a specific request needs
+screen/browser control. If you want Jarvis to be able to answer "is my
+laptop on?" directly (or mention it's been offline a specific amount of
+time, unprompted), set up the heartbeat: the laptop checks in with the
+cloud relay every couple of minutes while it's actually running, and
+`get_laptop_status` reads that to give a real answer instead of a guess.
+
+1. **On the cloud VM**, run `heartbeat_server.py` (pure stdlib, no extra
+   install) as another systemd service, same pattern as `jarvis-telegram`
+   above:
+   ```
+   sudo tee /etc/systemd/system/jarvis-heartbeat.service <<'EOF'
+   [Unit]
+   Description=Jarvis laptop heartbeat receiver
+   After=network.target
+
+   [Service]
+   WorkingDirectory=/path/to/jarvis
+   ExecStart=/path/to/jarvis/venv/bin/python -u heartbeat_server.py
+   Restart=always
+   EnvironmentFile=/path/to/jarvis/.env
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl enable --now jarvis-heartbeat
+   ```
+2. **Open the port** (`8765` by default) in the cloud provider's firewall/
+   security group, and set `JARVIS_HEARTBEAT_TOKEN` (any random string) in
+   the cloud VM's `.env`.
+3. **On the laptop**, add the same `JARVIS_HEARTBEAT_TOKEN` plus
+   `JARVIS_HEARTBEAT_URL=http://your-cloud-vm-ip:8765/heartbeat` to `.env`
+   (see `.env.example`). `main.py`'s normal wake-word loop (`run_loop()`)
+   starts sending the heartbeat automatically — nothing else to run.
+
+If the heartbeat isn't configured at all, `get_laptop_status` just reports
+"unknown" rather than doing anything misleading — everything else in this
+README works exactly the same with or without it.
+
 ## Calendar, email, notes, and web search (Phase 2)
 
 **Notes and web search work immediately, no setup needed.** Calendar and
@@ -298,6 +340,9 @@ restart your browser itself, since it doesn't own that window's lifecycle.
 - `browser_fill_and_submit`, `list_open_tabs`, `screenshot_tab`,
   `close_tab`, `close_all_tabs` — connected to the user's real Chrome, full
   control over every open tab, new or existing
+- `get_laptop_status` — reads the laptop's heartbeat (see "Always-on cloud
+  relay" above) to answer "is my laptop on?" for real, or give a specific
+  offline duration instead of a guess
 
 **Personality:** casual, dry-witted, talks like a sharp friend texting
 back rather than a formal assistant — light slang/emoji only when it

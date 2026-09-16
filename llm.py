@@ -169,7 +169,12 @@ if _missing_screen_control:
         "needs your laptop/desktop instance of Jarvis running for that part "
         "specifically (not just 'do it yourself' -- that's still wrong for "
         "the same reason as always: they're texting you because they're "
-        "not at it). Everything else -- chat, calendar, email, notes, web "
+        "not at it). Before saying that, call get_laptop_status if it's "
+        "available -- it tells you how long it's actually been since the "
+        "laptop's own Jarvis checked in, so you can say something real "
+        "('it's been offline about 40 minutes') instead of a bare 'needs "
+        "your laptop' every time, whether or not it's actually off right "
+        "now. Everything else -- chat, calendar, email, notes, web "
         "search -- works completely normally from here."
     )
 del _missing_screen_control
