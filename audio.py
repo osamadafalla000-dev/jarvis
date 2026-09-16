@@ -14,7 +14,21 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-import sounddevice as sd
+
+try:
+    # Needs PortAudio's native library, which requires actual audio
+    # hardware/drivers -- absent on a headless cloud host running only
+    # telegram_bot.py (which never touches live mic input, only
+    # transcribe() on already-downloaded files). Importing audio.py at all
+    # shouldn't crash there just because this one piece can't load; only
+    # the mic-capture functions below (WakeWordListener, record_utterance)
+    # actually need it, and they check SOUNDDEVICE_AVAILABLE themselves.
+    import sounddevice as sd
+
+    SOUNDDEVICE_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    sd = None
+    SOUNDDEVICE_AVAILABLE = False
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord expects 80ms (1280 samples @ 16kHz) frames
@@ -82,6 +96,12 @@ class WakeWordListener:
     """Blocks until the "hey jarvis" wake word is heard on the default mic."""
 
     def __init__(self, threshold: float = WAKE_WORD_THRESHOLD, gain: float = WAKE_WORD_GAIN):
+        if not SOUNDDEVICE_AVAILABLE:
+            raise RuntimeError(
+                "No usable audio input on this machine (sounddevice/PortAudio "
+                "didn't load) -- live mic listening only works where there's "
+                "real audio hardware, e.g. the laptop, not a headless server."
+            )
         from openwakeword.model import Model
 
         self.model = Model(wakeword_models=[WAKE_WORD_MODEL])
@@ -217,6 +237,13 @@ def record_utterance(
     initial_wait_blocks = (
         int(initial_wait_seconds / block_seconds) if initial_wait_seconds is not None else None
     )
+
+    if not SOUNDDEVICE_AVAILABLE:
+        raise RuntimeError(
+            "No usable audio input on this machine (sounddevice/PortAudio "
+            "didn't load) -- live mic recording only works where there's "
+            "real audio hardware, e.g. the laptop, not a headless server."
+        )
 
     frames: list[np.ndarray] = []
     silence_run = 0
